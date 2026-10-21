@@ -1,0 +1,15 @@
+uniform shader uTextureA;
+uniform shader uTextureB;
+uniform float uProgress;
+uniform float2 uResolution;
+
+half4 main(float2 coord) {
+    float2 center = uResolution * 0.5;
+    float zoomA = 1.0 + uProgress * 0.65;
+    float zoomB = 1.65 - uProgress * 0.65;
+    float2 coordA = (coord - center) / zoomA + center;
+    float2 coordB = (coord - center) / zoomB + center;
+    half4 colorA = uTextureA.eval(coordA);
+    half4 colorB = uTextureB.eval(coordB);
+    return mix(colorA, colorB, half(uProgress));
+}

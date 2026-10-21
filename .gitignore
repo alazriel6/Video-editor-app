@@ -1,0 +1,15 @@
+@"
+.vs/
+.vscode/
+bin/
+obj/
+publish/
+artifacts/
+TestResults/
+*.user
+*.suo
+.env
+.env.*
+.md
+!.env.example
+"@ | Set-Content .gitignore

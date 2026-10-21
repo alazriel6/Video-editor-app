@@ -1,0 +1,1072 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:AiVideoEditor.App.Controls"
+        xmlns:tl="using:AiVideoEditor.App.Controls.TimelineControl"
+        x:Class="AiVideoEditor.App.Views.MainWindow"
+        Title="Vortex Cut Studio — Professional Video &amp; AI Editor"
+        Width="1660" Height="960"
+        MinWidth="1240" MinHeight="760"
+        Background="#FF111215"
+        WindowStartupLocation="CenterScreen"
+        DragDrop.AllowDrop="True">
+
+    <Grid RowDefinitions="30,*,24">
+
+        <!-- ==================== TOP NATIVE STUDIO MENU & SEQUENCE BAR ==================== -->
+        <Border Grid.Row="0" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="0,0,0,1" Padding="8,0">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+                <Menu Grid.Column="0" Background="Transparent" VerticalAlignment="Center" FontSize="11">
+                    <MenuItem Header="File">
+                        <MenuItem Header="Import Media... (Ctrl+I)" Click="OnImportMediaClick"/>
+                        <Separator/>
+                        <MenuItem Header="Open Project (.vortex)... (Ctrl+O)" Click="OnLoadProjectClick"/>
+                        <MenuItem Header="Save Project (.vortex)... (Ctrl+S)" Click="OnSaveProjectClick"/>
+                        <Separator/>
+                        <MenuItem Header="Export Video... (Ctrl+M)" Command="{Binding OpenExportModalCommand}"/>
+                    </MenuItem>
+                    <MenuItem Header="Edit">
+                        <MenuItem Header="{Binding UndoTooltip}" Command="{Binding UndoCommand}" IsEnabled="{Binding CanUndo}"/>
+                        <MenuItem Header="{Binding RedoTooltip}" Command="{Binding RedoCommand}" IsEnabled="{Binding CanRedo}"/>
+                        <Separator/>
+                        <MenuItem Header="Cut (Ctrl+X)" Command="{Binding Timeline.CutSelectedClipCommand}"/>
+                        <MenuItem Header="Copy (Ctrl+C)" Command="{Binding Timeline.CopySelectedClipCommand}"/>
+                        <MenuItem Header="Paste (Ctrl+V)" Command="{Binding Timeline.PasteClipAtPlayheadCommand}"/>
+                        <MenuItem Header="Paste Attributes (Ctrl+Alt+V)" Command="{Binding Timeline.PasteAttributesToSelectedClipCommand}"/>
+                        <MenuItem Header="Duplicate Clip (Ctrl+D)" Command="{Binding Timeline.DuplicateSelectedClipCommand}"/>
+                        <Separator/>
+                        <MenuItem Header="Delete (Leave Gap) (Del)" Command="{Binding Timeline.DeleteSelectedClipCommand}"/>
+                        <MenuItem Header="Ripple Delete (Close Gap) (Shift+Del)" Command="{Binding Timeline.RippleDeleteSelectedClipCommand}"/>
+                        <MenuItem Header="Close Gap at Playhead" Command="{Binding Timeline.CloseGapAtPlayheadCommand}"/>
+                    </MenuItem>
+                    <MenuItem Header="Clip">
+                        <MenuItem Header="Split at Playhead (Ctrl+B / S)" Command="{Binding Timeline.SplitAtPlayheadCommand}"/>
+                        <MenuItem Header="Speed / Duration... (Ctrl+R)" Command="{Binding OpenSpeedDurationModalCommand}"/>
+                        <MenuItem Header="Add Freeze Frame (3s) (Shift+F)" Command="{Binding Timeline.FreezeFrameAtPlayheadCommand}"/>
+                        <MenuItem Header="Detach Audio to Audio Track" Command="{Binding Timeline.DetachAudioFromSelectedClipCommand}"/>
+                        <MenuItem Header="Add Transform Keyframe (K)" Command="{Binding Inspector.AddMasterKeyframeAtPlayheadCommand}"/>
+                        <MenuItem Header="Add Timeline Marker (M)" Command="{Binding Timeline.AddMarkerAtPlayheadCommand}"/>
+                        <Separator/>
+                        <MenuItem Header="Add Text / Title (T)" Command="{Binding Timeline.AddQuickTextClipCommand}"/>
+                        <MenuItem Header="Reveal File in Explorer" Command="{Binding Timeline.RevealSelectedClipInExplorerCommand}"/>
+                    </MenuItem>
+                    <MenuItem Header="Sequence">
+                        <MenuItem Header="Auto Subtitles" Command="{Binding Timeline.GenerateAutoCaptionsCommand}"/>
+                        <MenuItem Header="Remove Silence..." Command="{Binding OpenStripSilenceModalCommand}"/>
+                        <MenuItem Header="Clean Voice Noise" Command="{Binding Timeline.EnhanceVoiceOnTimelineCommand}"/>
+                        <Separator/>
+                        <MenuItem Header="Add Video Track" Command="{Binding Timeline.AddVideoTrackCommand}"/>
+                        <MenuItem Header="Add Audio Track" Command="{Binding Timeline.AddAudioTrackCommand}"/>
+                        <MenuItem Header="Fit Timeline to View (\)" Click="OnFitTimelineClick"/>
+                    </MenuItem>
+                    <MenuItem Header="Workspace">
+                        <MenuItem Header="Source Monitor" Command="{Binding SwitchToSourceMonitorCommand}"/>
+                        <MenuItem Header="Program Monitor" Command="{Binding SwitchToProgramMonitorCommand}"/>
+                        <MenuItem Header="Toggle Safe Margins" Click="OnToggleSafeMarginsClick"/>
+                    </MenuItem>
+                    <MenuItem Header="AI Studio">
+                        <MenuItem Header="AI Studio Settings (LM Studio / Gemini / ChatGPT)... (Ctrl+,)" Command="{Binding OpenSettingsModalCommand}"/>
+                        <MenuItem Header="Open AI Edit Assistant (Ctrl+K)" Command="{Binding FocusAiAssistantCommand}"/>
+                    </MenuItem>
+                </Menu>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="12,0,0,0">
+                    <Border Background="#FF3B82F6" CornerRadius="3" Padding="6,2">
+                        <TextBlock Text="VORTEX CUT STUDIO" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10"/>
+                    </Border>
+                    <TextBox Text="{Binding ProjectName}" Width="180" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <Button Content="↶ Undo" Command="{Binding UndoCommand}" IsEnabled="{Binding CanUndo}" ToolTip.Tip="{Binding UndoTooltip}"/>
+                    <Button Content="↷ Redo" Command="{Binding RedoCommand}" IsEnabled="{Binding CanRedo}" ToolTip.Tip="{Binding RedoTooltip}"/>
+                    <Button Content="⚙ AI Settings" Command="{Binding OpenSettingsModalCommand}" BorderBrush="#FF10B981"/>
+                    <Button Content="Export Video" Command="{Binding OpenExportModalCommand}"
+                            Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ==================== 4-QUADRANT NLE DOCKING WORKSPACE ==================== -->
+        <Grid Grid.Row="1" RowDefinitions="54*,2,46*">
+
+            <!-- UPPER QUADRANTS (28% Left | 2px Splitter | 43% Center Monitor | 2px Splitter | 29% Right Inspector/AI) -->
+            <Grid Grid.Row="0" ColumnDefinitions="28*,2,43*,2,29*">
+
+                <!-- 1. TOP-LEFT QUADRANT: Media Pool, Effects & Transitions Library, Subtitles, Audio & Voice -->
+                <Border Grid.Column="0" Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="0,0,1,1">
+                    <TabControl SelectedIndex="{Binding LeftPanelTabIndex}" Padding="4">
+
+                        <!-- TAB 1: MEDIA POOL -->
+                        <TabItem Header="Media Pool">
+                            <Grid RowDefinitions="30,*,26" Margin="2">
+                                <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,*,Auto" Margin="0,0,0,4">
+                                    <Button Grid.Column="0" Content="+ Import Media (Ctrl+I)" Click="OnImportMediaClick"
+                                            Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold" Margin="0,0,4,0"/>
+                                    <Button Grid.Column="1" Content="Preview Source" Click="OnLoadSelectedToSourceClick" Margin="0,0,4,0"/>
+                                    <Button Grid.Column="3" Content="Add to Timeline" Command="{Binding MediaBin.AddSelectedAssetToTimelineCommand}"/>
+                                </Grid>
+
+                                <ListBox Grid.Row="1" ItemsSource="{Binding MediaBin.Assets}"
+                                         SelectedItem="{Binding MediaBin.SelectedAsset}"
+                                         DoubleTapped="OnMediaPoolAssetDoubleTapped"
+                                         Background="#FF111215" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid ColumnDefinitions="50,*,Auto" Margin="2">
+                                                <Border Grid.Column="0" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="4,2" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Type}" Foreground="#FF9CA3AF" FontSize="9" HorizontalAlignment="Center"/>
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Spacing="1" Margin="8,0">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                                    <TextBlock Text="{Binding ResolutionSummary}" Foreground="#FF9CA3AF" FontSize="10"
+                                                               FontFamily="Cascadia Mono, Consolas, Monospace"/>
+                                                </StackPanel>
+                                                <Border Grid.Column="2" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="5,2" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Duration, StringFormat='{}{0:0.00}s'}" Foreground="#FFF3F4F6"
+                                                               FontFamily="Cascadia Mono, Consolas, Monospace" FontSize="10"/>
+                                                </Border>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <Border Grid.Row="2" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="6,3" Margin="0,4,0,0">
+                                    <TextBlock Text="Drag &amp; drop MP4, MOV, MKV, WAV, MP3, or PNG files here."
+                                               Foreground="#FF9CA3AF" FontSize="10" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                </Border>
+                            </Grid>
+                        </TabItem>
+
+                        <!-- TAB 2: EFFECTS & TRANSITIONS LIBRARY (Section 5.4) -->
+                        <TabItem Header="Effects &amp; Transitions">
+                            <Grid RowDefinitions="Auto,Auto,*" Margin="2">
+                                <TextBox Grid.Row="0" Text="{Binding MediaBin.EffectsSearchQuery}"
+                                         Watermark="Search transitions, video effects, color looks, or audio effects..."
+                                         Margin="0,0,0,4"/>
+
+                                <WrapPanel Grid.Row="1" Margin="0,0,0,4">
+                                    <Button Content="All" Command="{Binding MediaBin.SelectEffectsCategoryCommand}" CommandParameter="All" Padding="6,2" FontSize="10" Margin="1"/>
+                                    <Button Content="Transitions" Command="{Binding MediaBin.SelectEffectsCategoryCommand}" CommandParameter="Video Transitions" Padding="6,2" FontSize="10" Margin="1"/>
+                                    <Button Content="Video FX" Command="{Binding MediaBin.SelectEffectsCategoryCommand}" CommandParameter="Video Effects" Padding="6,2" FontSize="10" Margin="1"/>
+                                    <Button Content="Color Looks" Command="{Binding MediaBin.SelectEffectsCategoryCommand}" CommandParameter="Color Presets" Padding="6,2" FontSize="10" Margin="1"/>
+                                    <Button Content="Audio FX" Command="{Binding MediaBin.SelectEffectsCategoryCommand}" CommandParameter="Audio Effects" Padding="6,2" FontSize="10" Margin="1"/>
+                                </WrapPanel>
+
+                                <ListBox Grid.Row="2" ItemsSource="{Binding MediaBin.FilteredEffectItems}"
+                                         Background="#FF111215" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="6,4" Margin="0,1">
+                                                <Grid ColumnDefinitions="*,Auto,Auto">
+                                                    <StackPanel Grid.Column="0" Spacing="1">
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                                        <TextBlock Text="{Binding Description}" Foreground="#FF9CA3AF" FontSize="9.5"/>
+                                                    </StackPanel>
+                                                    <Border Grid.Column="1" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3"
+                                                            Padding="4,1" VerticalAlignment="Center" Margin="6,0">
+                                                        <TextBlock Text="{Binding Badge}" Foreground="#FF3B82F6" FontSize="8.5" FontWeight="Bold"/>
+                                                    </Border>
+                                                    <Button Grid.Column="2" Content="+ Apply"
+                                                            Command="{Binding $parent[Window].DataContext.MediaBin.ApplyEffectItemCommand}"
+                                                            CommandParameter="{Binding}"
+                                                            Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"
+                                                            Padding="7,2" FontSize="10" VerticalAlignment="Center"/>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </TabItem>
+
+                        <!-- TAB 3: SUBTITLES & TRANSCRIPT -->
+                        <TabItem Header="Subtitles">
+                            <Grid RowDefinitions="Auto,*" Margin="2">
+                                <Border Grid.Row="0" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="6" Margin="0,0,0,4">
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="AUTO SUBTITLES &amp; TEXT-BASED CUTTING" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                        <TextBlock Text="Click any line to jump playhead, or delete a line to cut that video segment."
+                                                   TextWrapping="Wrap" Foreground="#FF9CA3AF" FontSize="10"/>
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <Button Content="📝 Auto Subtitles" Command="{Binding Timeline.GenerateAutoCaptionsCommand}"
+                                                    Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"/>
+                                            <Button Content="T Add Text" Command="{Binding Timeline.AddQuickTextClipCommand}"/>
+                                            <Button Content="🔇 Remove Silence..." Command="{Binding OpenStripSilenceModalCommand}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <ListBox Grid.Row="1" ItemsSource="{Binding Timeline.ActiveTranscriptSegments}"
+                                         Background="#FF111215" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="6" Margin="0,1">
+                                                <Grid ColumnDefinitions="*,Auto,Auto">
+                                                    <StackPanel Grid.Column="0" Spacing="2">
+                                                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" Foreground="#FFF3F4F6" FontSize="11"/>
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <TextBlock Text="{Binding StartTime, StringFormat='{}{0:00.00}s'}"
+                                                                       FontFamily="Cascadia Mono, Consolas, Monospace" Foreground="#FF9CA3AF" FontSize="10"/>
+                                                            <TextBlock Text="{Binding EndTime, StringFormat='→ {0:00.00}s'}"
+                                                                       FontFamily="Cascadia Mono, Consolas, Monospace" Foreground="#FF9CA3AF" FontSize="10"/>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="1" Content="Jump"
+                                                            Command="{Binding $parent[Window].DataContext.Timeline.JumpToTranscriptSegmentCommand}"
+                                                            CommandParameter="{Binding}" VerticalAlignment="Center" Margin="4,0"/>
+                                                    <Button Grid.Column="2" Content="Cut"
+                                                            Command="{Binding $parent[Window].DataContext.Timeline.DeleteTranscriptSegmentAndCutVideoCommand}"
+                                                            CommandParameter="{Binding}"
+                                                            Background="#FF22242C" Foreground="#FFEF4444" VerticalAlignment="Center"/>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </TabItem>
+
+                        <!-- TAB 4: AUDIO & VOICE -->
+                        <TabItem Header="Audio &amp; Voice">
+                            <ScrollViewer Margin="2">
+                                <StackPanel Spacing="8">
+                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="AI VOICEOVER GENERATOR" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                            <ComboBox ItemsSource="{Binding MediaBin.VoicePresets}"
+                                                      SelectedItem="{Binding MediaBin.SelectedVoicePreset}" HorizontalAlignment="Stretch"/>
+                                            <TextBox Text="{Binding MediaBin.TtsInputText}" AcceptsReturn="True" Height="54"
+                                                     Watermark="Enter voiceover script..."/>
+                                            <Button Content="Generate Voiceover to Audio Track"
+                                                    Command="{Binding MediaBin.GenerateAiVoiceoverCommand}"
+                                                    Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold" HorizontalAlignment="Stretch"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="SOUND EFFECTS (SFX)" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                            <TextBox Text="{Binding MediaBin.SfxPromptText}" Watermark="Describe sound effect..."/>
+                                            <Button Content="Generate Sound Effect"
+                                                    Command="{Binding MediaBin.GenerateAiSfxCommand}"
+                                                    HorizontalAlignment="Stretch"/>
+
+                                            <TextBlock Text="Quick Sound Effects:" Foreground="#FF9CA3AF" FontSize="10" Margin="0,2,0,0"/>
+                                            <WrapPanel>
+                                                <Button Content="Whoosh" Command="{Binding MediaBin.GenerateAiSfxCommand}" CommandParameter="Whoosh" Margin="2"/>
+                                                <Button Content="Digital Glitch" Command="{Binding MediaBin.GenerateAiSfxCommand}" CommandParameter="Glitch" Margin="2"/>
+                                                <Button Content="Deep Bass Impact" Command="{Binding MediaBin.GenerateAiSfxCommand}" CommandParameter="Sub Impact" Margin="2"/>
+                                                <Button Content="Soft Chime" Command="{Binding MediaBin.GenerateAiSfxCommand}" CommandParameter="Chime" Margin="2"/>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </TabItem>
+                    </TabControl>
+                </Border>
+
+                <!-- VERTICAL GRIDSPLITTER 1 -->
+                <GridSplitter Grid.Column="1" Background="#FF111215" ResizeDirection="Columns"/>
+
+                <!-- 2. TOP-CENTER QUADRANT: SOURCE & PROGRAM MONITOR VIEWPORT -->
+                <Grid Grid.Column="2" RowDefinitions="30,*,36" Background="#FF18191E">
+
+                    <!-- Monitor Mode Header Strip with Aspect Ratio & Preview Resolution Selectors -->
+                    <Border Grid.Row="0" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="0,0,0,1" Padding="6,0">
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                <Button Content="Source" Command="{Binding SwitchToSourceMonitorCommand}"
+                                        Padding="7,2" FontSize="10" FontWeight="SemiBold"/>
+                                <Button Content="Program" Command="{Binding SwitchToProgramMonitorCommand}"
+                                        Background="#FF3B82F6" Foreground="#FFF3F4F6" Padding="7,2" FontSize="10" FontWeight="SemiBold"/>
+                                <ComboBox ItemsSource="{Binding AspectRatioOptions}"
+                                          SelectedItem="{Binding SelectedAspectRatio}"
+                                          Width="112" MinHeight="20" FontSize="9.5" ToolTip.Tip="Canvas Aspect Ratio"/>
+                                <ComboBox ItemsSource="{Binding PreviewQualityOptions}"
+                                          SelectedItem="{Binding SelectedPreviewQuality}"
+                                          Width="112" MinHeight="20" FontSize="9.5" ToolTip.Tip="Preview Render Quality"/>
+                            </StackPanel>
+
+                            <TextBlock Grid.Column="1" Text="{Binding SourceInOutSummary}"
+                                       IsVisible="{Binding IsSourceMonitorActive}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       FontFamily="Cascadia Mono, Consolas, Monospace" FontSize="10" Foreground="#FF9CA3AF"/>
+
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <CheckBox Content="Safe Guides" IsChecked="{Binding ShowSafeMargins}" FontSize="10" Foreground="#FF9CA3AF"/>
+                                <controls:TimecodeScrubberControl x:Name="TopTimecodeScrubber" Width="102" Height="20"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Interactive WYSIWYG Skia Video Viewport -->
+                    <Border Grid.Row="1" Background="#FF111215" Padding="4">
+                        <controls:VideoPreviewCanvas x:Name="PreviewCanvas"/>
+                    </Border>
+
+                    <!-- Transport Deck & Mark In/Out Strip -->
+                    <Border Grid.Row="2" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="0,1,0,1" Padding="8,0">
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
+                                <Button Content="|&lt;" Command="{Binding SeekToStartCommand}" ToolTip.Tip="Go to Start (Home)"/>
+                                <Button Content="-1F" Click="OnStepBackwardClick" ToolTip.Tip="Step Back 1 Frame (Left Arrow)"/>
+                                <Button Content="J" Click="OnShuttleReverseClick" ToolTip.Tip="Reverse Playback (J)"/>
+                                <Button Content="K" Click="OnShuttleStopClick" ToolTip.Tip="Pause (K)"/>
+                                <Button Content="▶ Play / Pause" Command="{Binding TogglePlayPauseCommand}"
+                                        Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold" Padding="10,4"/>
+                                <Button Content="L" Click="OnShuttleForwardClick" ToolTip.Tip="Fast Forward 1x/2x/4x (L)"/>
+                                <Button Content="+1F" Click="OnStepForwardClick" ToolTip.Tip="Step Forward 1 Frame (Right Arrow)"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Timeline.FormattedTimecode}"
+                                           FontFamily="Cascadia Mono, JetBrains Mono, Consolas, Monospace"
+                                           FontSize="13" FontWeight="Bold" Foreground="#FFF3F4F6"/>
+                                <TextBlock Text="/" Foreground="#FF6B7280" FontSize="12"/>
+                                <TextBlock Text="{Binding Timeline.DurationTimecode}"
+                                           FontFamily="Cascadia Mono, JetBrains Mono, Consolas, Monospace"
+                                           FontSize="12" Foreground="#FF9CA3AF"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
+                                <Button Content="[ In" Command="{Binding SetMarkInCommand}" ToolTip.Tip="Set In Point (I)"/>
+                                <Button Content="Out ]" Command="{Binding SetMarkOutCommand}" ToolTip.Tip="Set Out Point (O)"/>
+                                <Button Content="Insert" Command="{Binding InsertSourceClipToTimelineCommand}" ToolTip.Tip="Insert to Timeline (F9)"/>
+                                <Button Content="Overwrite" Command="{Binding OverwriteSourceClipToTimelineCommand}" ToolTip.Tip="Overwrite to Timeline (F10)"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <!-- VERTICAL GRIDSPLITTER 2 -->
+                <GridSplitter Grid.Column="3" Background="#FF111215" ResizeDirection="Columns"/>
+
+                <!-- 3. TOP-RIGHT QUADRANT: INSPECTOR (WITH KEYFRAME MINI-TIMELINE, EDITABLE NUMERIC BOXES + RESET ↺) & AI ASSISTANT -->
+                <Border Grid.Column="4" Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="1,0,0,1">
+                    <TabControl SelectedIndex="{Binding RightPanelTabIndex}" Padding="4">
+
+                        <!-- TAB 1: INSPECTOR -->
+                        <TabItem Header="Inspector &amp; Keyframes ◇">
+                            <ScrollViewer Margin="2">
+                                <StackPanel Spacing="6">
+
+                                    <!-- Clean Clip Name Header (Section 1.1) -->
+                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="6">
+                                        <Grid ColumnDefinitions="*,Auto,Auto">
+                                            <TextBlock Grid.Column="0" Text="{Binding Inspector.ClipTitle}"
+                                                       FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11" VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding Inspector.KeyframeSummaryText}"
+                                                       Foreground="#FFF59E0B" FontWeight="SemiBold" FontSize="10" VerticalAlignment="Center" Margin="6,0"/>
+                                            <Button Grid.Column="2" Content="Reset All" Command="{Binding Inspector.ResetTransformsCommand}"
+                                                    Padding="6,1" FontSize="9.5"/>
+                                        </Grid>
+                                    </Border>
+
+                                    <!-- Premiere / DaVinci Dual-Pane Keyframe Mini-Timeline with Time Ruler (Section 4) -->
+                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="6"
+                                            IsEnabled="{Binding Inspector.HasSelectedClip}">
+                                        <StackPanel Spacing="4">
+                                            <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                                                <TextBlock Grid.Column="0" Text="KEYFRAME TIMELINE (◆)" FontWeight="Bold" Foreground="#FFF59E0B" FontSize="10" VerticalAlignment="Center"/>
+                                                <Button Grid.Column="1" Content="+ Keyframe All (K)"
+                                                        Command="{Binding Inspector.AddMasterKeyframeAtPlayheadCommand}"
+                                                        Foreground="#FFF59E0B" Padding="5,1" FontSize="9.5" Margin="0,0,4,0"/>
+                                                <ComboBox Grid.Column="2" ItemsSource="{Binding Inspector.EasingOptions}"
+                                                          SelectedItem="{Binding Inspector.SelectedEasingType}"
+                                                          Width="96" MinHeight="20" FontSize="9.5" Margin="0,0,4,0"/>
+                                                <Button Grid.Column="3" Content="Clear" Command="{Binding Inspector.ClearAllKeyframesCommand}"
+                                                        Padding="5,1" FontSize="9.5"/>
+                                            </Grid>
+                                            <controls:KeyframeGraphControl x:Name="InspectorKeyframeGraph"/>
+                                            <TextBlock Text="Click time ruler to scrub • Drag ◆ to move in time • Right-click ◆ for Smooth/Linear/Delete"
+                                                       Foreground="#FF9CA3AF" FontSize="9.5"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- PRO TEXT & TYPOGRAPHY STUDIO (Section 7.2) -->
+                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8"
+                                            IsVisible="{Binding Inspector.IsTextClip}">
+                                        <StackPanel Spacing="5">
+                                            <TextBlock Text="TEXT &amp; TYPOGRAPHY STUDIO" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5"/>
+                                            <TextBox x:Name="InspectorSubtitleTextBox"
+                                                     Text="{Binding Inspector.SubtitleText}"
+                                                     AcceptsReturn="True" Height="46"
+                                                     Watermark="Type title or subtitle text..."/>
+
+                                            <Grid ColumnDefinitions="*,100" Margin="0,2,0,0">
+                                                <ComboBox Grid.Column="0" ItemsSource="{Binding Inspector.SystemFontFamilies}"
+                                                          SelectedItem="{Binding Inspector.SelectedFontFamily}"
+                                                          HorizontalAlignment="Stretch" Margin="0,0,4,0" ToolTip.Tip="Font Family"/>
+                                                <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.FontWeightStyles}"
+                                                          SelectedItem="{Binding Inspector.SelectedFontWeightStyle}"
+                                                          HorizontalAlignment="Stretch" ToolTip.Tip="Font Weight / Style"/>
+                                            </Grid>
+
+                                            <StackPanel Spacing="1">
+                                                <controls:PrecisionParameterRow Label="Font Size" Minimum="16" Maximum="140" DefaultValue="48" Step="1" Decimals="0" Unit="pt"
+                                                                                Value="{Binding Inspector.FontSize}"/>
+                                                <controls:PrecisionParameterRow Label="Spacing" Minimum="-5" Maximum="30" DefaultValue="0.5" Step="0.2" Decimals="1" Unit="px"
+                                                                                Value="{Binding Inspector.LetterSpacing}"/>
+                                                <controls:PrecisionParameterRow Label="Line Height" Minimum="0.8" Maximum="2.5" DefaultValue="1.2" Step="0.05" Decimals="2" Unit="x"
+                                                                                Value="{Binding Inspector.LineHeight}"/>
+                                                <controls:PrecisionParameterRow Label="Stroke W" Minimum="0" Maximum="16" DefaultValue="3" Step="0.5" Decimals="1" Unit="px"
+                                                                                Value="{Binding Inspector.StrokeWidth}"/>
+                                                <controls:PrecisionParameterRow Label="Shadow Blur" Minimum="0" Maximum="24" DefaultValue="6" Step="0.5" Decimals="1" Unit="px"
+                                                                                Value="{Binding Inspector.ShadowBlur}"/>
+                                            </StackPanel>
+
+                                            <WrapPanel Margin="0,1,0,0">
+                                                <CheckBox Content="Outline Stroke" IsChecked="{Binding Inspector.StrokeEnabled}" FontSize="10" Margin="0,0,8,0"/>
+                                                <CheckBox Content="Drop Shadow" IsChecked="{Binding Inspector.ShadowEnabled}" FontSize="10" Margin="0,0,8,0"/>
+                                                <CheckBox Content="Backplate Box" IsChecked="{Binding Inspector.BackgroundBoxEnabled}" FontSize="10"/>
+                                            </WrapPanel>
+
+                                            <!-- Text Color, Background Box, Alignment & 9-Point Position Grid -->
+                                            <Grid ColumnDefinitions="Auto,*" Margin="0,2,0,0">
+                                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                                                    <Button Content="W" Background="#FFFFFFFF" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FFFFFFFF" Padding="5,1" FontSize="9.5"/>
+                                                    <Button Content="Y" Background="#FFFACC15" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FFFACC15" Padding="5,1" FontSize="9.5"/>
+                                                    <Button Content="C" Background="#FF38BDF8" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FF38BDF8" Padding="5,1" FontSize="9.5"/>
+                                                    <Button Content="G" Background="#FF4ADE80" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FF4ADE80" Padding="5,1" FontSize="9.5"/>
+                                                </StackPanel>
+                                                <TextBox Grid.Column="1" Text="{Binding Inspector.TextColorHex}" Margin="4,0,0,0" ToolTip.Tip="Fill Color Hex"/>
+                                            </Grid>
+
+                                            <Grid ColumnDefinitions="*,Auto" Margin="0,2,0,0">
+                                                <StackPanel Grid.Column="0" Spacing="3" Margin="0,0,6,0">
+                                                    <Grid ColumnDefinitions="64,*">
+                                                        <TextBlock Grid.Column="0" Text="Alignment" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                        <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TextAlignments}"
+                                                                  SelectedItem="{Binding Inspector.SelectedTextAlignment}" HorizontalAlignment="Stretch"/>
+                                                    </Grid>
+                                                    <Grid ColumnDefinitions="64,*">
+                                                        <TextBlock Grid.Column="0" Text="Animation" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                        <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TextAnimations}"
+                                                                  SelectedItem="{Binding Inspector.SelectedTextAnimation}" HorizontalAlignment="Stretch"/>
+                                                    </Grid>
+                                                </StackPanel>
+
+                                                <!-- 9-Point Quick Snap Grid -->
+                                                <UniformGrid Grid.Column="1" Rows="3" Columns="3" Width="66" Height="54">
+                                                    <Button Content="↖" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="TopLeft" Padding="1" FontSize="8"/>
+                                                    <Button Content="↑" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="TopCenter" Padding="1" FontSize="8"/>
+                                                    <Button Content="↗" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="TopRight" Padding="1" FontSize="8"/>
+                                                    <Button Content="←" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="MiddleLeft" Padding="1" FontSize="8"/>
+                                                    <Button Content="•" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="Center" Padding="1" FontSize="8"/>
+                                                    <Button Content="→" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="MiddleRight" Padding="1" FontSize="8"/>
+                                                    <Button Content="↙" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="BottomLeft" Padding="1" FontSize="8"/>
+                                                    <Button Content="↓" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="BottomCenter" Padding="1" FontSize="8"/>
+                                                    <Button Content="↘" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="BottomRight" Padding="1" FontSize="8"/>
+                                                </UniformGrid>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- TRANSFORM & CROP (PrecisionParameterRow + ScrubbableNumberBox + Keyframe Stepper + Reset ↺) -->
+                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8"
+                                            IsEnabled="{Binding Inspector.HasSelectedClip}">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="TRANSFORM &amp; CROP" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5"/>
+
+                                            <controls:PrecisionParameterRow Label="Scale %" Minimum="10" Maximum="400" DefaultValue="100" Step="1" Decimals="1" Unit="%"
+                                                                            Value="{Binding Inspector.ScalePercent}"
+                                                                            ShowKeyframeControls="True"
+                                                                            KeyframeDiamondIcon="{Binding Inspector.ScaleDiamondIcon}"
+                                                                            PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                            ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                            NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                            KeyframeParameter="Scale"/>
+
+                                            <controls:PrecisionParameterRow Label="Pos X" Minimum="-600" Maximum="600" DefaultValue="0" Step="2" Decimals="0" Unit="px"
+                                                                            Value="{Binding Inspector.PositionX}"
+                                                                            ShowKeyframeControls="True"
+                                                                            KeyframeDiamondIcon="{Binding Inspector.PositionDiamondIcon}"
+                                                                            PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                            ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                            NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                            KeyframeParameter="Position"/>
+
+                                            <controls:PrecisionParameterRow Label="Pos Y" Minimum="-400" Maximum="400" DefaultValue="0" Step="2" Decimals="0" Unit="px"
+                                                                            Value="{Binding Inspector.PositionY}"/>
+
+                                            <controls:PrecisionParameterRow Label="Rotation" Minimum="-180" Maximum="180" DefaultValue="0" Step="0.5" Decimals="1" Unit="°"
+                                                                            Value="{Binding Inspector.Rotation}"
+                                                                            ShowKeyframeControls="True"
+                                                                            KeyframeDiamondIcon="{Binding Inspector.RotationDiamondIcon}"
+                                                                            PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                            ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                            NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                            KeyframeParameter="Rotation"/>
+
+                                            <controls:PrecisionParameterRow Label="Opacity %" Minimum="0" Maximum="100" DefaultValue="100" Step="1" Decimals="0" Unit="%"
+                                                                            Value="{Binding Inspector.OpacityPercent}"
+                                                                            ShowKeyframeControls="True"
+                                                                            KeyframeDiamondIcon="{Binding Inspector.OpacityDiamondIcon}"
+                                                                            PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                            ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                            NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                            KeyframeParameter="Opacity"/>
+
+                                            <controls:PrecisionParameterRow Label="Crop L %" Minimum="0" Maximum="45" DefaultValue="0" Step="0.5" Decimals="0" Unit="%"
+                                                                            Value="{Binding Inspector.CropLeft}"/>
+
+                                            <controls:PrecisionParameterRow Label="Crop R %" Minimum="0" Maximum="45" DefaultValue="0" Step="0.5" Decimals="0" Unit="%"
+                                                                            Value="{Binding Inspector.CropRight}"/>
+
+                                            <controls:PrecisionParameterRow Label="Crop Top %" Minimum="0" Maximum="45" DefaultValue="0" Step="0.5" Decimals="0" Unit="%"
+                                                                            Value="{Binding Inspector.CropTop}"/>
+
+                                            <controls:PrecisionParameterRow Label="Crop Bot %" Minimum="0" Maximum="45" DefaultValue="0" Step="0.5" Decimals="0" Unit="%"
+                                                                            Value="{Binding Inspector.CropBottom}"/>
+
+                                            <WrapPanel Margin="0,3,0,0">
+                                                <CheckBox Content="Flip H" IsChecked="{Binding Inspector.FlipHorizontal}" FontSize="10" Margin="0,0,8,0"/>
+                                                <CheckBox Content="Flip V" IsChecked="{Binding Inspector.FlipVertical}" FontSize="10" Margin="0,0,8,0"/>
+                                                <CheckBox Content="Drop Shadow" IsChecked="{Binding Inspector.DropShadowEnabled}" FontSize="10" Margin="0,0,8,0"/>
+                                                <CheckBox Content="Remove Background" IsChecked="{Binding Inspector.SubjectMatteEnabled}" FontSize="10"/>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- COLOR GRADING SUITE (Section 3: Live RGB Scope + 3-Way Color Wheels + Normalized Rec.709 Matrix) -->
+                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8"
+                                            IsEnabled="{Binding Inspector.HasSelectedClip}">
+                                        <StackPanel Spacing="4">
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <TextBlock Grid.Column="0" Text="COLOR GRADING &amp; SCOPES (REC.709)" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                <Button Grid.Column="1" Content="Reset Color" Command="{Binding Inspector.ResetColorGradingCommand}" Padding="6,1" FontSize="9.5"/>
+                                            </Grid>
+
+                                            <!-- Live RGB Histogram / Luma Waveform Scope -->
+                                            <controls:VideoScopeControl x:Name="InspectorVideoScope"/>
+
+                                            <!-- 7 Creative Look Preset Pills -->
+                                            <WrapPanel>
+                                                <Button Content="Rec.709 Reset" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Rec.709 Reset" Padding="5,2" FontSize="9" Margin="1"/>
+                                                <Button Content="Teal &amp; Orange" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Teal &amp; Orange" Padding="5,2" FontSize="9" Margin="1"/>
+                                                <Button Content="Moody Matte" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Moody Matte" Padding="5,2" FontSize="9" Margin="1"/>
+                                                <Button Content="Golden Hour" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Golden Hour" Padding="5,2" FontSize="9" Margin="1"/>
+                                                <Button Content="Cyberpunk" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Cyberpunk" Padding="5,2" FontSize="9" Margin="1"/>
+                                                <Button Content="Kodak 2383" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Kodak 2383" Padding="5,2" FontSize="9" Margin="1"/>
+                                                <Button Content="Noir B&amp;W" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Noir B&amp;W" Padding="5,2" FontSize="9" Margin="1"/>
+                                            </WrapPanel>
+
+                                            <!-- 3-Way Color Wheels (Lift, Gamma, Gain) -->
+                                            <controls:ColorWheelControl
+                                                LiftRed="{Binding Inspector.LiftWheelRed}"
+                                                LiftGreen="{Binding Inspector.LiftWheelGreen}"
+                                                LiftBlue="{Binding Inspector.LiftWheelBlue}"
+                                                LiftLum="{Binding Inspector.LiftWheelLum}"
+                                                GammaRed="{Binding Inspector.GammaWheelRed}"
+                                                GammaGreen="{Binding Inspector.GammaWheelGreen}"
+                                                GammaBlue="{Binding Inspector.GammaWheelBlue}"
+                                                GammaLum="{Binding Inspector.GammaWheelLum}"
+                                                GainRed="{Binding Inspector.GainWheelRed}"
+                                                GainGreen="{Binding Inspector.GainWheelGreen}"
+                                                GainBlue="{Binding Inspector.GainWheelBlue}"
+                                                GainLum="{Binding Inspector.GainWheelLum}"/>
+
+                                            <TextBlock Text="Light &amp; Tone (Normalized Mid-Gray Pivot)" FontWeight="SemiBold" Foreground="#FF9CA3AF" FontSize="9.5" Margin="0,2,0,0"/>
+                                            <StackPanel Spacing="1">
+                                                <controls:PrecisionParameterRow Label="Exposure" Minimum="-4.0" Maximum="4.0" DefaultValue="0.0" Step="0.05" Decimals="2" Unit=" EV"
+                                                                                Value="{Binding Inspector.Exposure}"/>
+                                                <controls:PrecisionParameterRow Label="Contrast" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                Value="{Binding Inspector.Contrast}"/>
+                                                <controls:PrecisionParameterRow Label="Highlights" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                Value="{Binding Inspector.Highlights}"/>
+                                                <controls:PrecisionParameterRow Label="Shadows" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                Value="{Binding Inspector.Shadows}"/>
+                                                <controls:PrecisionParameterRow Label="Brightness" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                Value="{Binding Inspector.Brightness}"/>
+                                            </StackPanel>
+
+                                            <TextBlock Text="Color &amp; White Balance" FontWeight="SemiBold" Foreground="#FF9CA3AF" FontSize="9.5" Margin="0,2,0,0"/>
+                                            <StackPanel Spacing="1">
+                                                <controls:PrecisionParameterRow Label="Temperature" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                Value="{Binding Inspector.Temperature}"/>
+                                                <controls:PrecisionParameterRow Label="Tint" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                Value="{Binding Inspector.Tint}"/>
+                                                <controls:PrecisionParameterRow Label="Saturation" Minimum="0" Maximum="200" DefaultValue="100" Step="1" Decimals="0" Unit="%"
+                                                                                Value="{Binding Inspector.Saturation}"/>
+                                                <controls:PrecisionParameterRow Label="Vibrance" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                Value="{Binding Inspector.Vibrance}"/>
+                                                <controls:PrecisionParameterRow Label="Vignette" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                Value="{Binding Inspector.Vignette}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- VIDEO EFFECTS & TRANSITIONS (Section 5.1 & 5.2) -->
+                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8"
+                                            IsEnabled="{Binding Inspector.HasSelectedClip}">
+                                        <StackPanel Spacing="2">
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <TextBlock Grid.Column="0" Text="VIDEO EFFECTS &amp; TRANSITIONS" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                <Button Grid.Column="1" Content="Apply Transition to All Cuts"
+                                                        Command="{Binding Inspector.ApplyCurrentTransitionToAllClipsCommand}"
+                                                        Padding="6,1" FontSize="9.5"/>
+                                            </Grid>
+
+                                            <Grid ColumnDefinitions="68,*" Margin="0,2,0,2">
+                                                <TextBlock Grid.Column="0" Text="Transition" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TransitionTypes}"
+                                                          SelectedItem="{Binding Inspector.SelectedTransitionType}" HorizontalAlignment="Stretch"/>
+                                            </Grid>
+
+                                            <controls:PrecisionParameterRow Label="Trans Dur" Minimum="0.1" Maximum="2.5" DefaultValue="0.5" Step="0.05" Decimals="2" Unit="s"
+                                                                            Value="{Binding Inspector.TransitionDuration}"/>
+                                            <controls:PrecisionParameterRow Label="Cam Shake" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                            Value="{Binding Inspector.CameraShakeAmount}"/>
+                                            <controls:PrecisionParameterRow Label="Blur" Minimum="0" Maximum="25" DefaultValue="0" Step="0.5" Decimals="1" Unit="px"
+                                                                            Value="{Binding Inspector.GaussianBlurSigma}"/>
+                                            <controls:PrecisionParameterRow Label="RGB Split" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                            Value="{Binding Inspector.ChromaticAberrationAmount}"/>
+                                            <controls:PrecisionParameterRow Label="Film Grain" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                            Value="{Binding Inspector.FilmGrainAmount}"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- AUDIO EFFECTS & MIXING (Section 5.3) -->
+                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8"
+                                            IsEnabled="{Binding Inspector.HasSelectedClip}">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="AUDIO EFFECTS &amp; MIXING" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5"/>
+                                            <WrapPanel>
+                                                <CheckBox Content="Clean Voice Noise" IsChecked="{Binding Inspector.DialogueIsolateEnabled}" FontSize="10" Margin="0,0,10,0"/>
+                                                <CheckBox Content="Compressor &amp; Limiter" IsChecked="{Binding Inspector.CompressorEnabled}" FontSize="10"/>
+                                            </WrapPanel>
+
+                                            <controls:PrecisionParameterRow Label="Vol (dB)" Minimum="-48" Maximum="12" DefaultValue="0" Step="0.5" Decimals="1" Unit=" dB"
+                                                                            Value="{Binding Inspector.GainDb}"
+                                                                            ShowKeyframeControls="True"
+                                                                            KeyframeDiamondIcon="{Binding Inspector.GainDiamondIcon}"
+                                                                            PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                            ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                            NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                            KeyframeParameter="Gain"/>
+
+                                            <controls:PrecisionParameterRow Label="Pan L/R" Minimum="-1.0" Maximum="1.0" DefaultValue="0" Step="0.05" Decimals="2"
+                                                                            Value="{Binding Inspector.Pan}"/>
+                                            <controls:PrecisionParameterRow Label="Fade In" Minimum="0.0" Maximum="5.0" DefaultValue="0" Step="0.1" Decimals="1" Unit="s"
+                                                                            Value="{Binding Inspector.FadeInDuration}"/>
+                                            <controls:PrecisionParameterRow Label="Fade Out" Minimum="0.0" Maximum="5.0" DefaultValue="0" Step="0.1" Decimals="1" Unit="s"
+                                                                            Value="{Binding Inspector.FadeOutDuration}"/>
+                                            <controls:PrecisionParameterRow Label="Reverb Mix" Minimum="0.0" Maximum="1.0" DefaultValue="0.25" Step="0.02" Decimals="2"
+                                                                            Value="{Binding Inspector.ReverbDryWet}"/>
+
+                                            <Grid ColumnDefinitions="*,*" Margin="0,3,0,0">
+                                                <ComboBox Grid.Column="0" ItemsSource="{Binding Inspector.EqPresets}"
+                                                          SelectedItem="{Binding Inspector.SelectedEqPreset}" HorizontalAlignment="Stretch" Margin="0,0,3,0" ToolTip.Tip="Equalizer Preset"/>
+                                                <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.ReverbPresets}"
+                                                          SelectedItem="{Binding Inspector.SelectedReverbPreset}" HorizontalAlignment="Stretch" Margin="3,0,0,0" ToolTip.Tip="Acoustic Reverb"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </TabItem>
+
+                        <!-- TAB 2: AI ASSISTANT (LM STUDIO LOCAL + CLOUD AGENT) -->
+                        <TabItem Header="🤖 AI Assistant">
+                            <Grid RowDefinitions="Auto,*,Auto" Margin="2">
+                                <Border Grid.Row="0" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="6" Margin="0,0,0,4">
+                                    <StackPanel Spacing="4">
+                                        <Grid ColumnDefinitions="*,Auto,Auto">
+                                            <TextBlock Grid.Column="0" Text="AI EDIT ASSISTANT (LM STUDIO / GEMINI / GPT)" FontWeight="Bold" Foreground="#FF10B981" FontSize="10.5"/>
+                                            <Button Grid.Column="1" Content="⚙ AI Settings" Command="{Binding OpenSettingsModalCommand}" Padding="6,1" FontSize="9.5" Margin="0,0,4,0"/>
+                                            <Button Grid.Column="2" Content="Clear" Command="{Binding AiCopilot.ClearConsoleLogCommand}" Padding="6,1" FontSize="9.5"/>
+                                        </Grid>
+                                        <WrapPanel>
+                                            <Button Content="✨ Remove Silence + Yellow Subtitles + Keyframe Zoom"
+                                                    Command="{Binding AiCopilot.SendPromptCommand}"
+                                                    CommandParameter="Potong bagian yang hening di seluruh video, tambahkan subtitle otomatis warna kuning, dan beri efek zoom-in keyframe di awal video"
+                                                    FontSize="9.5" Margin="1"/>
+                                            <Button Content="◆ Smooth Keyframe Zoom-In (0s - 3s)"
+                                                    Command="{Binding AiCopilot.SendPromptCommand}"
+                                                    CommandParameter="Buat animasi zoom-in halus (Scale 1.0 ke 1.25) dengan keyframe di detik ke-0 sampai ke-3"
+                                                    FontSize="9.5" Margin="1"/>
+                                            <Button Content="✂ Split Every 5s + Cross Dissolve"
+                                                    Command="{Binding AiCopilot.SendPromptCommand}"
+                                                    CommandParameter="Potong video setiap 5 detik dan tambahkan transisi Cross Dissolve"
+                                                    FontSize="9.5" Margin="1"/>
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <ListBox Grid.Row="1" ItemsSource="{Binding AiCopilot.Messages}"
+                                         Background="#FF111215" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="0,0,0,1" Padding="6" Margin="0">
+                                                <StackPanel Spacing="2">
+                                                    <Grid ColumnDefinitions="*,Auto">
+                                                        <TextBlock Grid.Column="0" Text="{Binding Header}"
+                                                                   FontFamily="Cascadia Mono, Consolas, Monospace"
+                                                                   FontWeight="Bold" Foreground="#FF10B981" FontSize="10"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding Timestamp}"
+                                                                   FontFamily="Cascadia Mono, Consolas, Monospace"
+                                                                   Foreground="#FF6B7280" FontSize="9.5"/>
+                                                    </Grid>
+                                                    <TextBlock Text="{Binding Content}"
+                                                               FontFamily="Cascadia Mono, Consolas, Monospace"
+                                                               TextWrapping="Wrap" Foreground="#FFF3F4F6" FontSize="10.5"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                                    <TextBox Grid.Column="0" Text="{Binding AiCopilot.PromptInput}"
+                                             FontFamily="Cascadia Mono, Consolas, Monospace"
+                                             Watermark="Ask AI to remove silence, add keyframe zoom, or create subtitles..." Margin="0,0,4,0"/>
+                                    <Button Grid.Column="1" Content="Run AI"
+                                            Command="{Binding AiCopilot.SendPromptCommand}"
+                                            Background="#FF10B981" Foreground="#FF111215" FontWeight="Bold"/>
+                                </Grid>
+                            </Grid>
+                        </TabItem>
+                    </TabControl>
+                </Border>
+            </Grid>
+
+            <!-- HORIZONTAL GRIDSPLITTER -->
+            <GridSplitter Grid.Row="1" Background="#FF111215" ResizeDirection="Rows"/>
+
+            <!-- 4. BOTTOM QUADRANT: TIMELINE ACTION BAR, MULTI-TRACK CANVAS, HORIZONTAL SCROLLBAR, & VU METER -->
+            <Grid Grid.Row="2" RowDefinitions="36,*,18" ColumnDefinitions="*,64" Background="#FF18191E">
+
+                <!-- Clean Timeline Action Bar (Section 1.1) -->
+                <Border Grid.Row="0" Grid.Column="0" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="0,1,1,1" Padding="6,0">
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                        <ScrollViewer Grid.Column="0" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                            <StackPanel Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
+                                <!-- Group 1: Pointer Tools -->
+                                <Button x:Name="BtnToolSelect" Content="↖ Select (V)" Click="OnSelectToolClick"
+                                        Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold" ToolTip.Tip="Select &amp; Move Tool (V)"/>
+                                <Button x:Name="BtnToolRazor" Content="✂ Cut / Razor (C)" Click="OnRazorToolClick" ToolTip.Tip="Cut / Razor Split Tool (C)"/>
+                                <Button x:Name="BtnToolSlip" Content="↔ Slip (Y)" Click="OnSlipToolClick" ToolTip.Tip="Slip Source In/Out Tool (Y)"/>
+                                <Button x:Name="BtnToolHand" Content="✋ Hand (H)" Click="OnHandToolClick" ToolTip.Tip="Hand Pan Timeline Tool (H)"/>
+                                <Button x:Name="BtnToolText" Content="T Add Text (T)" Click="OnTextToolClick" ToolTip.Tip="Click Timeline to Add Text (T)"/>
+
+                                <Separator Width="1" Background="#FF2D303B" Margin="3,4"/>
+
+                                <!-- Group 2: Instant Edit Actions -->
+                                <Button Content="✂ Split (Ctrl+B)" Command="{Binding Timeline.SplitAtPlayheadCommand}" ToolTip.Tip="Split Clip at Playhead (Ctrl+B / S)"/>
+                                <Button Content="Duplicate (Ctrl+D)" Command="{Binding Timeline.DuplicateSelectedClipCommand}" ToolTip.Tip="Duplicate Selected Clip (Ctrl+D)"/>
+                                <Button Content="🗑 Delete" Command="{Binding Timeline.DeleteSelectedClipCommand}" ToolTip.Tip="Delete Clip &amp; Leave Gap (Del)"/>
+                                <Button Content="Delete Gap" Command="{Binding Timeline.RippleDeleteSelectedClipCommand}" ToolTip.Tip="Ripple Delete &amp; Close Gap (Shift+Del)"/>
+                                <Button Content="❄ Freeze Frame" Command="{Binding Timeline.FreezeFrameAtPlayheadCommand}" ToolTip.Tip="Insert 3.0s Freeze Frame (Shift+F)"/>
+                                <Button Content="⏱ Speed" Command="{Binding OpenSpeedDurationModalCommand}" ToolTip.Tip="Speed / Duration... (Ctrl+R)"/>
+                                <ToggleButton x:Name="BtnToggleSnap" Content="🧲 Snap (N)" IsChecked="{Binding Timeline.SnappingEnabled}"
+                                              Click="OnSnapToggleClick" FontSize="11" Padding="7,4" ToolTip.Tip="Toggle Magnetic Snapping (N)"/>
+                                <ToggleButton Content="🔗 Link V+A" IsChecked="{Binding Timeline.LinkVideoAndAudio}"
+                                              FontSize="11" Padding="7,4" ToolTip.Tip="Link Video &amp; Audio Clips"/>
+                                <Button Content="◆ Keyframe (K)" Command="{Binding Inspector.AddMasterKeyframeAtPlayheadCommand}"
+                                        Foreground="#FFF59E0B" FontWeight="SemiBold" ToolTip.Tip="Add Transform Keyframe at Playhead (K)"/>
+
+                                <Separator Width="1" Background="#FF2D303B" Margin="3,4"/>
+
+                                <!-- Group 3: Quick AI Actions (#10B981) -->
+                                <Button Content="📝 Auto Subtitles" Command="{Binding Timeline.GenerateAutoCaptionsCommand}"
+                                        BorderBrush="#FF10B981" Foreground="#FF10B981" FontWeight="SemiBold"/>
+                                <Button Content="🔇 Remove Silence" Command="{Binding OpenStripSilenceModalCommand}"
+                                        BorderBrush="#FF10B981" Foreground="#FF10B981"/>
+                                <Button Content="🎙 Clean Voice Noise" Command="{Binding Timeline.EnhanceVoiceOnTimelineCommand}"
+                                        BorderBrush="#FF10B981" Foreground="#FF10B981"/>
+                                <Button Content="🤖 AI Assistant (Ctrl+K)" Command="{Binding FocusAiAssistantCommand}"
+                                        Background="#FF10B981" Foreground="#FF111215" FontWeight="Bold"/>
+                            </StackPanel>
+                        </ScrollViewer>
+
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="8,0,0,0">
+                            <Button Content="Fit (\)" Click="OnFitTimelineClick" Padding="6,2" FontSize="10" ToolTip.Tip="Fit Entire Timeline to Window (\)"/>
+                            <TextBlock Text="Zoom" Foreground="#FF9CA3AF" FontSize="10" VerticalAlignment="Center"/>
+                            <Slider x:Name="TimelineZoomSlider" Width="110" Minimum="2" Maximum="300"
+                                    Value="{Binding Timeline.ZoomPixelsPerSecond}"
+                                    ValueChanged="OnTimelineZoomSliderChanged"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Custom Skia Multi-Track Timeline Canvas -->
+                <tl:TimelineCanvasControl Grid.Row="1" Grid.Column="0" x:Name="TimelineCanvas"/>
+
+                <!-- Dedicated Horizontal ScrollBar -->
+                <Border Grid.Row="2" Grid.Column="0" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="0,1,1,0" Padding="186,0,0,0">
+                    <ScrollBar x:Name="TimelineHorizontalScrollBar"
+                               Orientation="Horizontal"
+                               AllowAutoHide="False"
+                               Minimum="0"
+                               Maximum="{Binding Timeline.MaxScrollSeconds}"
+                               ViewportSize="{Binding Timeline.ViewportDurationSeconds}"
+                               LargeChange="10"
+                               SmallChange="2"
+                               Value="{Binding Timeline.ScrollOffsetSeconds}"
+                               ValueChanged="OnTimelineScrollBarValueChanged"/>
+                </Border>
+
+                <!-- Far-Right Master Audio VU Meter (Clean L & R bars without raw dBFS header) -->
+                <controls:AudioVuMeterControl Grid.Row="0" Grid.RowSpan="3" Grid.Column="1" x:Name="MasterVuMeter"/>
+            </Grid>
+        </Grid>
+
+        <!-- ==================== BOTTOM STATUS & TELEMETRY STRIP ==================== -->
+        <Border Grid.Row="2" Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="0,1,0,0" Padding="10,0">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="{Binding StatusMessage}"
+                           FontFamily="Cascadia Mono, Consolas, Monospace"
+                           Foreground="#FF9CA3AF" FontSize="10.5" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="Ctrl+Z/Y: Undo/Redo • Ctrl+C/X/V: Copy/Cut/Paste • Ctrl+B: Split • Shift+Del: Close Gap • Right-Click Timeline for Menu"
+                           FontFamily="Cascadia Mono, Consolas, Monospace"
+                           Foreground="#FF6B7280" FontSize="10" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <!-- ==================== MODAL 1: REMOVE SILENCE DIALOG ==================== -->
+        <Border Grid.Row="0" Grid.RowSpan="3" Background="#D8111215" IsVisible="{Binding IsStripSilenceModalOpen}">
+            <Border Width="450" Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="1"
+                    CornerRadius="4" Padding="16" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="🔇 REMOVE SILENCE — AUTOMATIC DEAD-AIR CUTTER" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="13"/>
+                    <TextBlock Text="Automatically detects and ripple-deletes silent pauses across linked Video and Audio tracks."
+                               Foreground="#FF9CA3AF" FontSize="11" TextWrapping="Wrap"/>
+
+                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="10">
+                        <StackPanel Spacing="4">
+                            <controls:PrecisionParameterRow Label="Threshold" Minimum="-60" Maximum="-10" DefaultValue="-38" Step="1" Decimals="0" Unit=" dB"
+                                                            Value="{Binding StripSilenceThresholdDb}"/>
+                            <controls:PrecisionParameterRow Label="Min Silence" Minimum="150" Maximum="2000" DefaultValue="400" Step="25" Decimals="0" Unit=" ms"
+                                                            Value="{Binding StripSilenceMinDurationMs}"/>
+                            <controls:PrecisionParameterRow Label="Pad Start" Minimum="0" Maximum="400" DefaultValue="80" Step="10" Decimals="0" Unit=" ms"
+                                                            Value="{Binding StripSilencePadStartMs}"/>
+                            <controls:PrecisionParameterRow Label="Pad End" Minimum="0" Maximum="400" DefaultValue="120" Step="10" Decimals="0" Unit=" ms"
+                                                            Value="{Binding StripSilencePadEndMs}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6">
+                        <Button Content="Cancel" Command="{Binding CloseStripSilenceModalCommand}"/>
+                        <Button Content="Remove Silence" Command="{Binding ApplyStripSilenceModalCommand}"
+                                Background="#FF10B981" Foreground="#FF111215" FontWeight="Bold"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Border>
+
+        <!-- ==================== MODAL 2: SPEED / DURATION DIALOG (Ctrl+R) ==================== -->
+        <Border Grid.Row="0" Grid.RowSpan="3" Background="#D8111215" IsVisible="{Binding IsSpeedDurationModalOpen}">
+            <Border Width="400" Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="1"
+                    CornerRadius="4" Padding="16" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="⏱ CLIP SPEED &amp; DURATION" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="13"/>
+                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="10">
+                        <StackPanel Spacing="8">
+                            <controls:PrecisionParameterRow Label="Speed %" Minimum="25" Maximum="400" DefaultValue="100" Step="5" Decimals="0" Unit="%"
+                                                            Value="{Binding ModalClipSpeedPercent}"/>
+                            <CheckBox Content="Reverse Playback (Play Clip Backwards)" IsChecked="{Binding ModalClipReversePlayback}" FontSize="11"/>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6">
+                        <Button Content="Cancel" Command="{Binding CloseSpeedDurationModalCommand}"/>
+                        <Button Content="Apply Speed" Command="{Binding ApplySpeedDurationModalCommand}"
+                                Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Border>
+
+        <!-- ==================== MODAL 3: AI STUDIO SETTINGS (LM STUDIO + CLOUD API HUB) ==================== -->
+        <Border Grid.Row="0" Grid.RowSpan="3" Background="#D8111215" IsVisible="{Binding IsSettingsModalOpen}">
+            <Border Width="780" MaxHeight="700" Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="1"
+                    CornerRadius="4" Padding="18" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid RowDefinitions="Auto,*,Auto">
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+                        <StackPanel>
+                            <TextBlock Text="⚙ VORTEX AI STUDIO SETTINGS — LOCAL &amp; CLOUD AI HUB" FontSize="14" FontWeight="Bold" Foreground="#FFF3F4F6"/>
+                            <TextBlock Text="Connect Local AI Servers (LM Studio / Ollama) or Cloud APIs (OpenAI ChatGPT, Google Gemini, Claude, Groq)."
+                                       Foreground="#FF9CA3AF" FontSize="11"/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Save &amp; Close" Command="{Binding CloseSettingsModalCommand}"
+                                Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"/>
+                    </Grid>
+
+                    <ScrollViewer Grid.Row="1">
+                        <StackPanel Spacing="10">
+                            <Border Background="#FF111215" BorderBrush="#FF10B981" BorderThickness="1" CornerRadius="3" Padding="8">
+                                <TextBlock Text="{Binding Settings.ConnectionStatusText}"
+                                           FontFamily="Cascadia Mono, Consolas, Monospace"
+                                           Foreground="#FF10B981" FontSize="11" TextWrapping="Wrap"/>
+                            </Border>
+
+                            <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="10">
+                                <StackPanel Spacing="6">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Grid.Column="0" Text="1. LOCAL AI SERVER (LM STUDIO / OLLAMA)" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                        <Button Grid.Column="1" Content="🔌 Test Connection &amp; Fetch Models"
+                                                Command="{Binding Settings.TestLocalConnectionCommand}"
+                                                Background="#FF10B981" Foreground="#FF111215" FontWeight="Bold"/>
+                                    </Grid>
+
+                                    <Grid ColumnDefinitions="175,*" RowDefinitions="Auto,Auto,Auto,Auto">
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Local Server Provider:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding Settings.LocalServerProviders}"
+                                                  SelectedItem="{Binding Settings.LocalServerProvider}" HorizontalAlignment="Stretch" Margin="0,2"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="LM Studio Base URL:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Settings.LmStudioBaseUrl}"
+                                                 Watermark="http://localhost:1234/v1" Margin="0,2"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Ollama Base URL:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Settings.OllamaBaseUrl}"
+                                                 Watermark="http://localhost:11434/v1" Margin="0,2"/>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Active Loaded Model:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <ComboBox Grid.Row="3" Grid.Column="1" ItemsSource="{Binding Settings.AvailableLocalModels}"
+                                                  SelectedItem="{Binding Settings.SelectedLocalServerModel}" HorizontalAlignment="Stretch" Margin="0,2"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="10">
+                                <StackPanel Spacing="6">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Grid.Column="0" Text="2. CLOUD API PROVIDERS (CHATGPT / GEMINI / CLAUDE / GROQ)" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                        <Button Grid.Column="1" Content="☁ Verify Cloud API Key"
+                                                Command="{Binding Settings.TestCloudConnectionCommand}"
+                                                Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"/>
+                                    </Grid>
+
+                                    <CheckBox Content="Use Cloud API Provider for AI Edit Assistant (Uncheck to use LM Studio / Local AI)"
+                                              IsChecked="{Binding Settings.UseCloudAgent}" FontSize="11"/>
+                                    <CheckBox Content="Use Cloud API for Auto Subtitles (OpenAI / Groq Whisper)"
+                                              IsChecked="{Binding Settings.UseCloudTranscription}" FontSize="11"/>
+                                    <CheckBox Content="Use ElevenLabs Cloud for Voiceover &amp; Sound Effects"
+                                              IsChecked="{Binding Settings.UseCloudAudio}" FontSize="11"/>
+
+                                    <Grid ColumnDefinitions="175,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Cloud LLM Provider:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding Settings.CloudProviders}"
+                                                  SelectedItem="{Binding Settings.SelectedCloudLlmProvider}" HorizontalAlignment="Stretch" Margin="0,2"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Cloud Model ID:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding Settings.CloudModelPresets}"
+                                                  SelectedItem="{Binding Settings.SelectedCloudLlmModel}" HorizontalAlignment="Stretch" Margin="0,2"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="OpenAI (ChatGPT) API Key:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Settings.OpenAiKey}" PasswordChar="•" Watermark="sk-..." Margin="0,2"/>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Google Gemini API Key:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Settings.GeminiKey}" PasswordChar="•" Watermark="AIza..." Margin="0,2"/>
+
+                                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Anthropic Claude API Key:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Settings.ClaudeKey}" PasswordChar="•" Watermark="sk-ant-..." Margin="0,2"/>
+
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Groq Cloud API Key:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding Settings.GroqKey}" PasswordChar="•" Watermark="gsk_..." Margin="0,2"/>
+
+                                        <TextBlock Grid.Row="6" Grid.Column="0" Text="ElevenLabs Audio Key:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding Settings.ElevenLabsKey}" PasswordChar="•" Watermark="xi-api-key..." Margin="0,2"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="10">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="3. LOCAL AI WEIGHTS (OFFLINE SUBTITLES &amp; BACKGROUND REMOVAL)" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                    <TextBlock Text="{Binding Settings.ModelsFolderPath, StringFormat='Folder: {0}'}"
+                                               FontFamily="Cascadia Mono, Consolas, Monospace" Foreground="#FF9CA3AF" FontSize="10"/>
+
+                                    <ItemsControl ItemsSource="{Binding Settings.LocalModels}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8" Margin="0,2">
+                                                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                                        <StackPanel Grid.Row="0" Grid.Column="0" Spacing="2">
+                                                            <TextBlock Text="{Binding Spec.DisplayName}" FontWeight="SemiBold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                                            <TextBlock Text="{Binding StatusText}" FontFamily="Cascadia Mono, Consolas, Monospace" Foreground="#FF9CA3AF" FontSize="10"/>
+                                                        </StackPanel>
+                                                        <Button Grid.Row="0" Grid.Column="1" Content="Download"
+                                                                Command="{Binding DownloadCommand}"
+                                                                IsEnabled="{Binding !IsDownloading}"/>
+                                                        <ProgressBar Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                                                     Minimum="0" Maximum="100" Value="{Binding DownloadProgress}"
+                                                                     IsVisible="{Binding IsDownloading}" Height="4" Margin="0,6,0,0"/>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,10,0,0">
+                        <Button Content="Save &amp; Close" Command="{Binding CloseSettingsModalCommand}"
+                                Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Border>
+
+        <!-- ==================== MODAL 4: EXPORT VIDEO DIALOG (Ctrl+M) ==================== -->
+        <Border Grid.Row="0" Grid.RowSpan="3" Background="#D8111215" IsVisible="{Binding IsExportModalOpen}">
+            <Border Width="540" Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="1"
+                    CornerRadius="4" Padding="18" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="EXPORT MASTER SEQUENCE (DELIVER)" FontSize="14" FontWeight="Bold" Foreground="#FFF3F4F6"/>
+                    <TextBlock Text="Hardware-accelerated two-stage export: mixes multi-track audio + DSP and renders composite frames."
+                               Foreground="#FF9CA3AF" FontSize="11" TextWrapping="Wrap"/>
+
+                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="10">
+                        <Grid ColumnDefinitions="145,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Studio Preset:" VerticalAlignment="Center" Margin="0,4" FontSize="11"/>
+                            <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding ExportPresets}"
+                                      SelectedItem="{Binding SelectedExportPreset}" HorizontalAlignment="Stretch" Margin="0,3"/>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Resolution:" VerticalAlignment="Center" Margin="0,4" FontSize="11"/>
+                            <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding ExportResolutions}"
+                                      SelectedItem="{Binding ExportResolution}" HorizontalAlignment="Stretch" Margin="0,3"/>
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Frame Rate (FPS):" VerticalAlignment="Center" Margin="0,4" FontSize="11"/>
+                            <ComboBox Grid.Row="2" Grid.Column="1" ItemsSource="{Binding ExportFpsOptions}"
+                                      SelectedItem="{Binding ExportFps}" HorizontalAlignment="Stretch" Margin="0,3"/>
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Hardware Encoder:" VerticalAlignment="Center" Margin="0,4" FontSize="11"/>
+                            <ComboBox Grid.Row="3" Grid.Column="1" ItemsSource="{Binding HardwareEncoders}"
+                                      SelectedItem="{Binding SelectedHardwareEncoder}" HorizontalAlignment="Stretch" Margin="0,3"/>
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Export Range:" VerticalAlignment="Center" Margin="0,4" FontSize="11"/>
+                            <ComboBox Grid.Row="4" Grid.Column="1" ItemsSource="{Binding ExportRanges}"
+                                      SelectedItem="{Binding SelectedExportRange}" HorizontalAlignment="Stretch" Margin="0,3"/>
+
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Save To:" VerticalAlignment="Center" Margin="0,4" FontSize="11"/>
+                            <Grid Grid.Row="5" Grid.Column="1" ColumnDefinitions="*,Auto" Margin="0,3">
+                                <TextBox Grid.Column="0" Text="{Binding ExportOutputPath}" Margin="0,0,4,0"/>
+                                <Button Grid.Column="1" Content="Browse..." Click="OnBrowseExportPathClick"/>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <ProgressBar Minimum="0" Maximum="100" Value="{Binding ExportProgressPercent}" Height="6" Foreground="#FF3B82F6"/>
+                    <TextBlock Text="{Binding ExportProgressStatus}"
+                               FontFamily="Cascadia Mono, Consolas, Monospace" Foreground="#FF9CA3AF" FontSize="10.5"/>
+
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                        <Button Grid.Column="0" Content="📂 Open Output Folder" Command="{Binding OpenExportFolderCommand}"/>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
+                            <Button Content="Cancel Render" Command="{Binding CancelExportCommand}" IsEnabled="{Binding IsExporting}"/>
+                            <Button Content="Close" Command="{Binding CloseExportModalCommand}" IsEnabled="{Binding !IsExporting}"/>
+                            <Button Content="Start Export" Command="{Binding StartExportCommand}"
+                                    IsEnabled="{Binding !IsExporting}" Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"/>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Border>
+
+    </Grid>
+</Window>

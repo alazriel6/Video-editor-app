@@ -1,0 +1,21 @@
+{
+  "luts": [
+    "CinematicTealOrange",
+    "WarmVintage",
+    "NoirBW",
+    "Cyberpunk",
+    "VividBoost"
+  ],
+  "transitions": [
+    "CrossFade",
+    "ZoomIn",
+    "Glitch",
+    "WipeLeft"
+  ],
+  "sfxPresets": [
+    "Whoosh",
+    "Glitch",
+    "Cinematic Boom",
+    "Chime"
+  ]
+}

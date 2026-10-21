@@ -1,0 +1,98 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Styles.Resources>
+        <ResourceDictionary>
+            <SolidColorBrush x:Key="Brush.Surface.AppBg" Color="#FF111215"/>
+            <SolidColorBrush x:Key="Brush.Surface.Workspace" Color="#FF111215"/>
+            <SolidColorBrush x:Key="Brush.Surface.Panel" Color="#FF18191E"/>
+            <SolidColorBrush x:Key="Brush.Surface.Header" Color="#FF22242C"/>
+            <SolidColorBrush x:Key="Brush.Surface.Elevated" Color="#FF22242C"/>
+            <SolidColorBrush x:Key="Brush.Surface.Hover" Color="#FF2E323E"/>
+            <SolidColorBrush x:Key="Brush.Border.Subtle" Color="#FF2D303B"/>
+            <SolidColorBrush x:Key="Brush.Border.Hairline" Color="#FF2D303B"/>
+            <SolidColorBrush x:Key="Brush.Border.Focus" Color="#FF3B82F6"/>
+            <SolidColorBrush x:Key="Brush.Text.Primary" Color="#FFF3F4F6"/>
+            <SolidColorBrush x:Key="Brush.Text.Secondary" Color="#FF9CA3AF"/>
+            <SolidColorBrush x:Key="Brush.Text.Muted" Color="#FF6B7280"/>
+            <SolidColorBrush x:Key="Brush.Accent.Primary" Color="#FF3B82F6"/>
+            <SolidColorBrush x:Key="Brush.Accent.AI" Color="#FF10B981"/>
+            <SolidColorBrush x:Key="Brush.Accent.Keyframe" Color="#FFF59E0B"/>
+            <SolidColorBrush x:Key="Brush.Accent.Playhead" Color="#FFEF4444"/>
+            <SolidColorBrush x:Key="Brush.Track.VideoClip" Color="#FF254B7C"/>
+            <SolidColorBrush x:Key="Brush.Track.AudioClip" Color="#FF1E5E4A"/>
+            <SolidColorBrush x:Key="Brush.Track.SubtitleClip" Color="#FF7C4D25"/>
+            <SolidColorBrush x:Key="Brush.Meter.Safe" Color="#FF22C55E"/>
+            <SolidColorBrush x:Key="Brush.Meter.Warn" Color="#FFEAB308"/>
+            <SolidColorBrush x:Key="Brush.Meter.Peak" Color="#FFEF4444"/>
+        </ResourceDictionary>
+    </Styles.Resources>
+
+    <Style Selector="Button">
+        <Setter Property="Background" Value="#FF22242C"/>
+        <Setter Property="Foreground" Value="#FFF3F4F6"/>
+        <Setter Property="BorderBrush" Value="#FF2D303B"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="3"/>
+        <Setter Property="Padding" Value="8,4"/>
+        <Setter Property="FontSize" Value="11"/>
+    </Style>
+
+    <Style Selector="Button:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="#FF2E323E"/>
+        <Setter Property="BorderBrush" Value="#FF3B82F6"/>
+    </Style>
+
+    <Style Selector="TextBox">
+        <Setter Property="Background" Value="#FF22242C"/>
+        <Setter Property="Foreground" Value="#FFF3F4F6"/>
+        <Setter Property="BorderBrush" Value="#FF2D303B"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="3"/>
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="MinHeight" Value="22"/>
+        <Setter Property="Padding" Value="5,2"/>
+    </Style>
+
+    <Style Selector="TextBox.numBox">
+        <Setter Property="Width" Value="48"/>
+        <Setter Property="MinHeight" Value="20"/>
+        <Setter Property="Padding" Value="3,1"/>
+        <Setter Property="FontSize" Value="10"/>
+        <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, Monospace"/>
+        <Setter Property="TextAlignment" Value="Right"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Background" Value="#FF111215"/>
+        <Setter Property="BorderBrush" Value="#FF2D303B"/>
+    </Style>
+
+    <Style Selector="Button.resetBtn">
+        <Setter Property="Padding" Value="3,1"/>
+        <Setter Property="MinHeight" Value="20"/>
+        <Setter Property="FontSize" Value="10"/>
+        <Setter Property="Foreground" Value="#FF9CA3AF"/>
+        <Setter Property="Background" Value="#FF18191E"/>
+        <Setter Property="BorderBrush" Value="#FF2D303B"/>
+    </Style>
+
+    <Style Selector="ComboBox">
+        <Setter Property="Background" Value="#FF22242C"/>
+        <Setter Property="Foreground" Value="#FFF3F4F6"/>
+        <Setter Property="BorderBrush" Value="#FF2D303B"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="3"/>
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="MinHeight" Value="24"/>
+    </Style>
+
+    <Style Selector="TabItem">
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="#FF9CA3AF"/>
+        <Setter Property="Padding" Value="8,4"/>
+        <Setter Property="MinHeight" Value="26"/>
+    </Style>
+
+    <Style Selector="TabItem:selected">
+        <Setter Property="Foreground" Value="#FFF3F4F6"/>
+    </Style>
+</Styles>

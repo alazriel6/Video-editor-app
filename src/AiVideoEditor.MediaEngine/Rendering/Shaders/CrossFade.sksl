@@ -1,0 +1,9 @@
+uniform shader uTextureA;
+uniform shader uTextureB;
+uniform float uProgress;
+
+half4 main(float2 coord) {
+    half4 colorA = uTextureA.eval(coord);
+    half4 colorB = uTextureB.eval(coord);
+    return mix(colorA, colorB, half(uProgress));
+}

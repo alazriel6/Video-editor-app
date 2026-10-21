@@ -1,0 +1,6 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:tl="using:AiVideoEditor.App.Controls.TimelineControl"
+             x:Class="AiVideoEditor.App.Views.TimelineView">
+    <tl:TimelineCanvasControl x:Name="InnerTimelineCanvas"/>
+</UserControl>

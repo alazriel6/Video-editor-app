@@ -1,0 +1,10 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="AiVideoEditor.App.Views.SettingsModal">
+    <StackPanel Spacing="8">
+        <TextBlock Text="PROCESSING ENGINES CONFIGURATION" FontSize="13" FontWeight="Bold" Foreground="#E6E6EB"/>
+        <CheckBox Content="Use External Endpoint for Dialogue Transcriber" IsChecked="{Binding UseCloudTranscription}"/>
+        <CheckBox Content="Use External Endpoint for Command Console Planner" IsChecked="{Binding UseCloudAgent}"/>
+        <CheckBox Content="Use External Endpoint for Foley &amp; Voice Synthesizer" IsChecked="{Binding UseCloudAudio}"/>
+    </StackPanel>
+</UserControl>

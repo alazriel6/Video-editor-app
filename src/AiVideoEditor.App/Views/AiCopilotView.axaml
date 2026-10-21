@@ -1,0 +1,12 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="AiVideoEditor.App.Views.AiCopilotView">
+    <Grid RowDefinitions="Auto,*,Auto" Margin="4">
+        <TextBlock Grid.Row="0" Text="COMMAND CONSOLE — EDIT DECISION AUTOMATION" FontWeight="Bold" Foreground="#E6E6EB" FontSize="11" Margin="0,0,0,6"/>
+        <ListBox Grid.Row="1" ItemsSource="{Binding Messages}" Background="#121214" CornerRadius="2"/>
+        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,6,0,0">
+            <TextBox Grid.Column="0" Text="{Binding PromptInput}" Watermark="Enter batch edit instruction..." Margin="0,0,4,0"/>
+            <Button Grid.Column="1" Content="Execute" Command="{Binding SendPromptCommand}" Background="#3B82F6" Foreground="#E6E6EB"/>
+        </Grid>
+    </Grid>
+</UserControl>

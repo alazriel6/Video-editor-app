@@ -1,0 +1,12 @@
+uniform shader uTextureA;
+uniform shader uTextureB;
+uniform float uProgress;
+uniform float2 uResolution;
+
+half4 main(float2 coord) {
+    float normX = coord.x / max(1.0, uResolution.x);
+    float edge = smoothstep(uProgress - 0.06, uProgress + 0.06, normX);
+    half4 colorA = uTextureA.eval(coord);
+    half4 colorB = uTextureB.eval(coord);
+    return mix(colorB, colorA, half(edge));
+}

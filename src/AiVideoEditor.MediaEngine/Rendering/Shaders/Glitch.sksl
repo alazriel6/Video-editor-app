@@ -1,0 +1,22 @@
+uniform shader uTextureA;
+uniform shader uTextureB;
+uniform float uProgress;
+uniform float2 uResolution;
+
+half4 main(float2 coord) {
+    float intensity = sin(uProgress * 3.14159265) * 28.0;
+    float slice = floor(coord.y / 24.0);
+    float shift = sin(slice * 12.9898 + uProgress * 45.0) * intensity;
+    float2 shiftedCoord = float2(coord.x + shift, coord.y);
+    half4 aR = uTextureA.eval(shiftedCoord + float2(intensity * 0.4, 0.0));
+    half4 aG = uTextureA.eval(shiftedCoord);
+    half4 aB = uTextureA.eval(shiftedCoord - float2(intensity * 0.4, 0.0));
+    half4 colA = half4(aR.r, aG.g, aB.b, aG.a);
+
+    half4 bR = uTextureB.eval(shiftedCoord + float2(intensity * 0.4, 0.0));
+    half4 bG = uTextureB.eval(shiftedCoord);
+    half4 bB = uTextureB.eval(shiftedCoord - float2(intensity * 0.4, 0.0));
+    half4 colB = half4(bR.r, bG.g, bB.b, bG.a);
+
+    return mix(colA, colB, half(uProgress));
+}

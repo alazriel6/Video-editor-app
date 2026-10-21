@@ -1,0 +1,84 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:AiVideoEditor.App.Controls"
+             x:Class="AiVideoEditor.App.Controls.PrecisionParameterRow"
+             x:Name="RootRow"
+             Height="26">
+
+    <Grid ColumnDefinitions="82,46,*,58,22" Height="26" VerticalAlignment="Center">
+        <!-- Column 0: Property Label -->
+        <TextBlock Grid.Column="0"
+                   Text="{Binding #RootRow.Label}"
+                   Foreground="#FFB0B4C0"
+                   FontSize="10.5"
+                   VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis"/>
+
+        <!-- Column 1: Keyframe Navigation Cluster [<] [◆] [>] -->
+        <StackPanel Grid.Column="1"
+                    Orientation="Horizontal"
+                    Spacing="1"
+                    VerticalAlignment="Center"
+                    HorizontalAlignment="Center"
+                    IsVisible="{Binding #RootRow.ShowKeyframeControls}">
+            <Button Content="&lt;"
+                    Command="{Binding #RootRow.PrevKeyframeCommand}"
+                    CommandParameter="{Binding #RootRow.KeyframePropertyKey}"
+                    Width="13" Height="16" Padding="0" FontSize="8.5"
+                    Background="Transparent" BorderThickness="0" Foreground="#FF9CA3AF"
+                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                    ToolTip.Tip="Previous Keyframe"/>
+            <Button Content="{Binding #RootRow.DiamondIcon}"
+                    Command="{Binding #RootRow.ToggleKeyframeCommand}"
+                    CommandParameter="{Binding #RootRow.KeyframePropertyKey}"
+                    Width="16" Height="16" Padding="0" FontSize="9.5" FontWeight="Bold"
+                    Background="Transparent" BorderThickness="0" Foreground="#FFF59E0B"
+                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                    ToolTip.Tip="Add / Remove Keyframe at Playhead"/>
+            <Button Content="&gt;"
+                    Command="{Binding #RootRow.NextKeyframeCommand}"
+                    CommandParameter="{Binding #RootRow.KeyframePropertyKey}"
+                    Width="13" Height="16" Padding="0" FontSize="8.5"
+                    Background="Transparent" BorderThickness="0" Foreground="#FF9CA3AF"
+                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                    ToolTip.Tip="Next Keyframe"/>
+        </StackPanel>
+
+        <!-- Column 2: Slim Precision Slider (Double-Click to Reset) -->
+        <Slider Grid.Column="2"
+                x:Name="ParamSlider"
+                Minimum="{Binding #RootRow.Minimum}"
+                Maximum="{Binding #RootRow.Maximum}"
+                Value="{Binding #RootRow.Value, Mode=TwoWay}"
+                VerticalAlignment="Center"
+                Margin="2,0,4,0"
+                DoubleTapped="OnSliderDoubleTapped"/>
+
+        <!-- Column 3: Dual-Mode Scrubbable & Direct-Type Value Box -->
+        <controls:ScrubbableNumberBox Grid.Column="3"
+                                      x:Name="ScrubBox"
+                                      Minimum="{Binding #RootRow.Minimum}"
+                                      Maximum="{Binding #RootRow.Maximum}"
+                                      StepSize="{Binding #RootRow.StepSize}"
+                                      FormatString="{Binding #RootRow.FormatString}"
+                                      Suffix="{Binding #RootRow.Suffix}"
+                                      Value="{Binding #RootRow.Value, Mode=TwoWay}"
+                                      VerticalAlignment="Center"/>
+
+        <!-- Column 4: Reset Button [↺] -->
+        <Button Grid.Column="4"
+                x:Name="BtnReset"
+                Content="↺"
+                Width="20" Height="20"
+                Padding="0"
+                Margin="2,0,0,0"
+                FontSize="10.5"
+                Background="Transparent"
+                BorderThickness="0"
+                Foreground="#FF4E5260"
+                HorizontalContentAlignment="Center"
+                VerticalContentAlignment="Center"
+                Click="OnResetButtonClick"
+                ToolTip.Tip="Reset to Default"/>
+    </Grid>
+</UserControl>
