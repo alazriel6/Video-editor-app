@@ -10,6 +10,8 @@ TestResults/
 *.suo
 .env
 .env.*
-.md
 !.env.example
 "@ | Set-Content .gitignore
+
+# Ignore all Markdown files
+*.md
