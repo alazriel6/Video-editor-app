@@ -19,8 +19,8 @@ public class LocalModelDownloader
         new()
         {
             Id = "whisper-base",
-            DisplayName = "Whisper Base (Multilingual Dialogue Transcriber)",
-            Category = "Dialogue Transcriber & Strip Silence",
+            DisplayName = "Whisper Base (Multilingual Speech Recognition)",
+            Category = "Auto Subtitles & Remove Silence",
             FileName = "ggml-base.bin",
             DownloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
             SizeDescription = "147 MB"
@@ -28,8 +28,8 @@ public class LocalModelDownloader
         new()
         {
             Id = "whisper-large-v3-turbo",
-            DisplayName = "Whisper Large v3 Turbo (Broadcast Dialogue Transcriber)",
-            Category = "Dialogue Transcriber & Strip Silence",
+            DisplayName = "Whisper Large v3 Turbo (Studio Speech Recognition)",
+            Category = "Auto Subtitles & Remove Silence",
             FileName = "ggml-large-v3-turbo.bin",
             DownloadUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
             SizeDescription = "1.5 GB"
@@ -37,8 +37,8 @@ public class LocalModelDownloader
         new()
         {
             Id = "qwen2.5-7b",
-            DisplayName = "Qwen 2.5 Coder 7B Instruct Q4_K_M (GGUF EDL Planner)",
-            Category = "Command Console / EDL Planner",
+            DisplayName = "Qwen 2.5 7B Instruct (Local Smart Assistant Model)",
+            Category = "Smart Edit Assistant",
             FileName = "qwen2.5-7b-instruct-q4_k_m.gguf",
             DownloadUrl = "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
             SizeDescription = "4.68 GB"
@@ -46,8 +46,8 @@ public class LocalModelDownloader
         new()
         {
             Id = "rvm-mobilenetv3",
-            DisplayName = "RobustVideoMatting MobileNetV3 FP32 (ONNX Rotoscope)",
-            Category = "Subject Matte Extractor",
+            DisplayName = "Subject Isolation Engine (Video Background Removal)",
+            Category = "Remove Background",
             FileName = "rvm_mobilenetv3_fp32.onnx",
             DownloadUrl = "https://huggingface.co/PeterL1n/RobustVideoMatting/resolve/main/rvm_mobilenetv3_fp32.onnx",
             SizeDescription = "15 MB"
@@ -55,8 +55,8 @@ public class LocalModelDownloader
         new()
         {
             Id = "kokoro-tts",
-            DisplayName = "Kokoro v1.0 Neural Voice Synthesizer (ONNX)",
-            Category = "Voice Over & Foley Synthesizer",
+            DisplayName = "Kokoro v1.0 Studio Voice Synthesizer",
+            Category = "Voiceover & Sound Effects",
             FileName = "kokoro-v1.0.onnx",
             DownloadUrl = "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v0_19.onnx",
             SizeDescription = "310 MB"

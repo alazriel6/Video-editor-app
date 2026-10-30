@@ -10,7 +10,8 @@ namespace AiVideoEditor.App.Controls;
 /// <summary>
 /// Premiere Pro / DaVinci Resolve style Dual-Pane Keyframe Mini-Timeline inside the Inspector.
 /// Includes a Top Mini Time Ruler (seconds/minutes + Sequence Timecode), a synchronized Mini Red Playhead,
-/// interactive gold keyframe diamonds (◆), live drag tooltip, and right-click easing context menu.
+/// interactive gold keyframe diamonds (◆), live drag tooltip, right-click easing context menu,
+/// and full Undo/Redo commit events.
 /// </summary>
 public sealed class KeyframeGraphControl : Control
 {
@@ -22,19 +23,41 @@ public sealed class KeyframeGraphControl : Control
     private KeyframePoint? _draggingKeyframe;
     private AnimatableProperty? _draggingTrack;
     private string _draggingLabel = string.Empty;
+    private TimelineClip? _dragPreEditSnapshot;
 
     public event Action<double>? PlayheadRequested;
     public event Action? KeyframesMutated;
+    public event Action<TimelineClip, TimelineClip, string>? KeyframeCommandCommitted;
 
     public KeyframeGraphControl()
     {
         ClipToBounds = true;
-        Height = 128;
+        Height = 140;
+    }
+
+    public void SetPlayheadTime(double globalPlayheadTime)
+    {
+        if (_clip != null)
+        {
+            double newRel = Math.Clamp(globalPlayheadTime - _clip.TimelineStart, 0, Math.Max(0.05, _clip.Duration));
+            if (Math.Abs(_clipRelativePlayhead - newRel) > 0.001)
+            {
+                _clipRelativePlayhead = newRel;
+                InvalidateVisual();
+            }
+        }
     }
 
     public void BindClip(TimelineClip? clip, double globalPlayheadTime)
     {
+        if (_clip == clip && clip != null)
+        {
+            SetPlayheadTime(globalPlayheadTime);
+            return;
+        }
+
         _clip = clip;
+        _cachedTracks = null;
         if (clip != null)
         {
             _clipRelativePlayhead = Math.Clamp(globalPlayheadTime - clip.TimelineStart, 0, Math.Max(0.05, clip.Duration));
@@ -46,10 +69,14 @@ public sealed class KeyframeGraphControl : Control
         InvalidateVisual();
     }
 
+    private (string Label, AnimatableProperty Track, string Unit)[]? _cachedTracks;
+
     private (string Label, AnimatableProperty Track, string Unit)[] GetTracks()
     {
         if (_clip == null) return Array.Empty<(string, AnimatableProperty, string)>();
-        return new (string, AnimatableProperty, string)[]
+        if (_cachedTracks != null) return _cachedTracks;
+
+        var list = new List<(string, AnimatableProperty, string)>(10)
         {
             ("Scale", _clip.ScaleTrack, "%"),
             ("Pos X", _clip.PosXTrack, "px"),
@@ -58,6 +85,18 @@ public sealed class KeyframeGraphControl : Control
             ("Opacity", _clip.OpacityTrack, "%"),
             ("Volume", _clip.VolumeTrack, "dB")
         };
+
+        if (_clip.CropLeftTrack.Keyframes.Count > 0 || _clip.CropRightTrack.Keyframes.Count > 0 ||
+            _clip.CropTopTrack.Keyframes.Count > 0 || _clip.CropBottomTrack.Keyframes.Count > 0)
+        {
+            list.Add(("Crop L", _clip.CropLeftTrack, "%"));
+            list.Add(("Crop R", _clip.CropRightTrack, "%"));
+            list.Add(("Crop T", _clip.CropTopTrack, "%"));
+            list.Add(("Crop B", _clip.CropBottomTrack, "%"));
+        }
+
+        _cachedTracks = list.ToArray();
+        return _cachedTracks;
     }
 
     private double TimeToX(double relTime, double width)
@@ -294,6 +333,7 @@ public sealed class KeyframeGraphControl : Control
 
         if (hitKf != null)
         {
+            _dragPreEditSnapshot = _clip.Clone();
             _draggingKeyframe = hitKf;
             _draggingTrack = track;
             _draggingLabel = trackInfo.Label;
@@ -311,6 +351,7 @@ public sealed class KeyframeGraphControl : Control
 
     private void ShowKeyframeContextMenu(AnimatableProperty track, KeyframePoint kf)
     {
+        if (_clip == null) return;
         var menu = new ContextMenu();
 
         MenuItem MakeEasingItem(string title, EasingType easing)
@@ -321,8 +362,12 @@ public sealed class KeyframeGraphControl : Control
             };
             item.Click += (_, _) =>
             {
+                if (_clip == null) return;
+                var before = _clip.Clone();
                 kf.Easing = easing;
+                var after = _clip.Clone();
                 KeyframesMutated?.Invoke();
+                KeyframeCommandCommitted?.Invoke(before, after, $"Change Keyframe Easing ({easing})");
                 InvalidateVisual();
             };
             return item;
@@ -338,10 +383,15 @@ public sealed class KeyframeGraphControl : Control
         var deleteItem = new MenuItem { Header = "Delete Keyframe (Del)" };
         deleteItem.Click += (_, _) =>
         {
+            if (_clip == null) return;
+            var before = _clip.Clone();
+            _cachedTracks = null;
             track.Keyframes.Remove(kf);
             if (track.Keyframes.Count == 0)
                 track.IsAnimated = false;
+            var after = _clip.Clone();
             KeyframesMutated?.Invoke();
+            KeyframeCommandCommitted?.Invoke(before, after, "Delete Keyframe");
             InvalidateVisual();
         };
         menu.Items.Add(deleteItem);
@@ -373,6 +423,12 @@ public sealed class KeyframeGraphControl : Control
             _draggingKeyframe = null;
             _draggingTrack = null;
             e.Pointer.Capture(null);
+            if (_clip != null && _dragPreEditSnapshot != null)
+            {
+                var after = _clip.Clone();
+                KeyframeCommandCommitted?.Invoke(_dragPreEditSnapshot, after, $"Move {_draggingLabel} Keyframe");
+            }
+            _dragPreEditSnapshot = null;
             InvalidateVisual();
         }
     }

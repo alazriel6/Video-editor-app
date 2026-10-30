@@ -3,6 +3,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using AiVideoEditor.Core.Models;
 using AiVideoEditor.App.Controls;
 using AiVideoEditor.App.Controls.TimelineControl;
 using AiVideoEditor.App.ViewModels;
@@ -14,14 +15,52 @@ public partial class MainWindow : Window
     private MainWindowViewModel? Vm => DataContext as MainWindowViewModel;
     private bool _suppressScrollSync;
     private bool _suppressZoomSync;
+    private bool _allowWindowClose;
 
     public MainWindow()
     {
         InitializeComponent();
 
         DataContextChanged += (_, _) => WireUpViewModel();
+        AddHandler(KeyDownEvent, OnWindowKeyDownTunnel, RoutingStrategies.Tunnel);
         KeyDown += OnWindowKeyDown;
         AddHandler(DragDrop.DropEvent, OnWindowFileDrop);
+        Closing += OnMainWindowClosing;
+    }
+
+    private void OnMainWindowClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (_allowWindowClose || Vm == null || !Vm.IsProjectModified)
+            return;
+
+        e.Cancel = true;
+        Vm.RequestActionWithUnsavedCheck("closing Vortex Cut Studio", () =>
+        {
+            _allowWindowClose = true;
+            Close();
+        });
+    }
+
+    private void OnWindowKeyDownTunnel(object? sender, KeyEventArgs e)
+    {
+        if (Vm == null) return;
+        bool ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        bool shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+
+        // Universal Tunneling Undo / Redo for sliders, curves, keyframes, numeric boxes, text inputs
+        if (ctrl && e.Key == Key.Z)
+        {
+            if (shift) Vm.Redo();
+            else Vm.Undo();
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && e.Key == Key.Y)
+        {
+            Vm.Redo();
+            e.Handled = true;
+            return;
+        }
     }
 
     private void WireUpViewModel()
@@ -33,6 +72,7 @@ public partial class MainWindow : Window
         TimelineCanvas?.SelectClip(Vm.Timeline.SelectedClip);
         TopTimecodeScrubber?.SetTimecode(Vm.Timeline.PlayheadTime, Vm.Document.Fps);
         InspectorKeyframeGraph?.BindClip(Vm.Timeline.SelectedClip, Vm.Timeline.PlayheadTime);
+        InspectorCurveEditor?.BindClip(Vm.Timeline.SelectedClip);
 
         if (PreviewCanvas != null)
         {
@@ -62,6 +102,7 @@ public partial class MainWindow : Window
                 Vm.Inspector.BindClip(clip);
                 TimelineCanvas?.SelectClip(clip);
                 InspectorKeyframeGraph?.BindClip(clip, Vm.Timeline.PlayheadTime);
+                InspectorCurveEditor?.BindClip(clip);
             };
 
             PreviewCanvas.TextLayerDoubleClicked += clip =>
@@ -70,6 +111,8 @@ public partial class MainWindow : Window
                 Vm.RightPanelTabIndex = 0;
                 Vm.Timeline.SelectedClip = clip;
                 Vm.Inspector.BindClip(clip);
+                InspectorKeyframeGraph?.BindClip(clip, Vm.Timeline.PlayheadTime);
+                InspectorCurveEditor?.BindClip(clip);
                 InspectorSubtitleTextBox?.Focus();
                 InspectorSubtitleTextBox?.SelectAll();
             };
@@ -77,12 +120,30 @@ public partial class MainWindow : Window
             PreviewCanvas.FrameRendered += () =>
             {
                 if (Vm == null) return;
-                InspectorVideoScope?.UpdateScope(Vm.Compositor.LastScopeHistograms);
+                if (Vm.Compositor.LastScopeData != null)
+                    InspectorVideoScope?.UpdateScopeData(Vm.Compositor.LastScopeData);
+                else
+                    InspectorVideoScope?.UpdateScope(Vm.Compositor.LastScopeHistograms);
+            };
+        }
+
+        if (InspectorCurveEditor != null)
+        {
+            InspectorCurveEditor.CurveChanged += SyncMonitorCanvas;
+            InspectorCurveEditor.CurveCommitted += (before, after, desc) =>
+            {
+                if (Vm == null) return;
+                Vm.Inspector.RecordCurveCommit(before, after, desc);
             };
         }
 
         if (InspectorKeyframeGraph != null)
         {
+            InspectorKeyframeGraph.KeyframeCommandCommitted += (before, after, desc) =>
+            {
+                if (Vm == null) return;
+                Vm.Inspector.RecordKeyframeGraphCommit(before, after, desc);
+            };
             InspectorKeyframeGraph.PlayheadRequested += targetTime =>
             {
                 if (Vm == null) return;
@@ -147,6 +208,7 @@ public partial class MainWindow : Window
                 Vm.Timeline.SelectedClip = clip;
                 Vm.Inspector.BindClip(clip);
                 InspectorKeyframeGraph?.BindClip(clip, Vm.Timeline.PlayheadTime);
+                InspectorCurveEditor?.BindClip(clip);
                 SyncMonitorCanvas();
             };
 
@@ -156,6 +218,7 @@ public partial class MainWindow : Window
                 Vm.Timeline.UpdateTimecodeDisplay();
                 Vm.Inspector.BindClip(TimelineCanvas.SelectedClip);
                 InspectorKeyframeGraph?.BindClip(TimelineCanvas.SelectedClip, Vm.Timeline.PlayheadTime);
+                InspectorCurveEditor?.BindClip(TimelineCanvas.SelectedClip);
                 SyncMonitorCanvas();
             };
 
@@ -190,15 +253,19 @@ public partial class MainWindow : Window
         }
 
         Vm.RequestCanvasRefresh += SyncMonitorCanvas;
+        Vm.RequestPlaybackTick += SyncPlaybackTick;
 
         Vm.RequestTimelineRefresh += () =>
         {
             if (Vm == null) return;
+            UpdateScopeState();
             TimelineCanvas?.BindDocument(Vm.Document, Vm.UndoRedo, Vm.TimelineService, Vm.FrameReader);
             TimelineCanvas?.SetPlayhead(Vm.Timeline.PlayheadTime);
             TimelineCanvas?.SelectClip(Vm.Timeline.SelectedClip);
             TopTimecodeScrubber?.SetTimecode(Vm.Timeline.PlayheadTime, Vm.Document.Fps);
+            _lastBoundClip = Vm.Timeline.SelectedClip;
             InspectorKeyframeGraph?.BindClip(Vm.Timeline.SelectedClip, Vm.Timeline.PlayheadTime);
+            InspectorCurveEditor?.BindClip(Vm.Timeline.SelectedClip);
         };
 
         Vm.RequestVuMeterRefresh += (leftDb, rightDb) =>
@@ -207,10 +274,42 @@ public partial class MainWindow : Window
         };
     }
 
+    private TimelineClip? _lastBoundClip;
+
+    private void UpdateScopeState()
+    {
+        if (Vm == null) return;
+        bool shouldEnableScopes = Vm.RightPanelTabIndex == 0 &&
+                                  Vm.Inspector.SelectedInspectorTabIndex == 1 &&
+                                  Vm.Inspector.IsColorWheelsExpanded;
+        Vm.Compositor.EnableScopeUpdates = shouldEnableScopes;
+    }
+
+    private void SyncPlaybackTick(double time)
+    {
+        if (Vm == null || PreviewCanvas == null) return;
+
+        TimelineCanvas?.SetPlayhead(time);
+        TopTimecodeScrubber?.SetTimecode(time, Vm.Document.Fps);
+        InspectorKeyframeGraph?.SetPlayheadTime(time);
+
+        if (Vm.IsSourceMonitorActive)
+        {
+            PreviewCanvas.Mode = MonitorDisplayMode.SourceAsset;
+            PreviewCanvas.SetSourceAsset(Vm.SourceMonitorAsset, time);
+        }
+        else
+        {
+            PreviewCanvas.Mode = MonitorDisplayMode.ProgramSequence;
+            PreviewCanvas.SetTime(time);
+        }
+    }
+
     private void SyncMonitorCanvas()
     {
         if (Vm == null || PreviewCanvas == null) return;
 
+        UpdateScopeState();
         PreviewCanvas.PreviewQualityScale = Vm.PreviewQualityScale;
         PreviewCanvas.UpdateDocument(Vm.Document, Vm.Timeline.SelectedClip);
         if (Vm.IsSourceMonitorActive)
@@ -225,7 +324,17 @@ public partial class MainWindow : Window
             PreviewCanvas.SetTime(Vm.Timeline.PlayheadTime);
             TopTimecodeScrubber?.SetTimecode(Vm.Timeline.PlayheadTime, Vm.Document.Fps);
         }
-        InspectorKeyframeGraph?.BindClip(Vm.Timeline.SelectedClip, Vm.Timeline.PlayheadTime);
+
+        if (_lastBoundClip != Vm.Timeline.SelectedClip)
+        {
+            _lastBoundClip = Vm.Timeline.SelectedClip;
+            InspectorKeyframeGraph?.BindClip(Vm.Timeline.SelectedClip, Vm.Timeline.PlayheadTime);
+            InspectorCurveEditor?.BindClip(Vm.Timeline.SelectedClip);
+        }
+        else
+        {
+            InspectorKeyframeGraph?.SetPlayheadTime(Vm.Timeline.PlayheadTime);
+        }
     }
 
     private void OnWindowKeyDown(object? sender, KeyEventArgs e)
@@ -304,6 +413,12 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        if (ctrl && e.Key == Key.N)
+        {
+            OnNewProjectClick(this, new RoutedEventArgs());
+            e.Handled = true;
+            return;
+        }
         if (ctrl && e.Key == Key.I)
         {
             OnImportMediaClick(this, new RoutedEventArgs());
@@ -316,7 +431,13 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-        if (ctrl && e.Key == Key.S)
+        if (ctrl && shift && e.Key == Key.S)
+        {
+            OnSaveProjectAsClick(this, new RoutedEventArgs());
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && !shift && e.Key == Key.S)
         {
             OnSaveProjectClick(this, new RoutedEventArgs());
             e.Handled = true;
@@ -629,17 +750,43 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnNewProjectClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm == null) return;
+        Vm.RequestActionWithUnsavedCheck("creating a new project", () =>
+        {
+            Vm.CreateNewProject();
+        });
+    }
+
     private async void OnSaveProjectClick(object? sender, RoutedEventArgs e)
     {
         if (Vm == null) return;
+        if (!string.IsNullOrWhiteSpace(Vm.CurrentProjectFilePath))
+        {
+            await Vm.SaveProjectToFileAsync(Vm.CurrentProjectFilePath);
+            return;
+        }
+
+        await PromptAndSaveProjectAsAsync();
+    }
+
+    private async void OnSaveProjectAsClick(object? sender, RoutedEventArgs e)
+    {
+        await PromptAndSaveProjectAsAsync();
+    }
+
+    private async Task<bool> PromptAndSaveProjectAsAsync()
+    {
+        if (Vm == null) return false;
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
-            Title = "Save Vortex Cut Studio Project (.vortex)",
-            DefaultExtension = "vortex",
-            SuggestedFileName = $"{Vm.ProjectName}.vortex",
+            Title = "Save Vortex Cut Studio Project (.vcsproj)",
+            DefaultExtension = "vcsproj",
+            SuggestedFileName = $"{Vm.ProjectName}.vcsproj",
             FileTypeChoices = new[]
             {
-                new FilePickerFileType("Vortex Cut Project") { Patterns = new[] { "*.vortex", "*.scproj", "*.aive", "*.json" } }
+                new FilePickerFileType("Vortex Cut Studio Project (.vcsproj)") { Patterns = new[] { "*.vcsproj", "*.vortex", "*.scproj", "*.aive", "*.json" } }
             }
         });
 
@@ -647,26 +794,132 @@ public partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(localPath))
         {
             await Vm.SaveProjectToFileAsync(localPath);
+            return true;
+        }
+        return false;
+    }
+
+    private void OnLoadProjectClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm == null) return;
+        Vm.RequestActionWithUnsavedCheck("opening another project", async () =>
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Open Vortex Cut Studio Project (.vcsproj)",
+                AllowMultiple = false,
+                FileTypeFilter = new[]
+                {
+                    new FilePickerFileType("Vortex Cut Studio Project") { Patterns = new[] { "*.vcsproj", "*.vortex", "*.scproj", "*.aive", "*.json" } }
+                }
+            });
+
+            string? localPath = files.FirstOrDefault()?.TryGetLocalPath();
+            if (!string.IsNullOrWhiteSpace(localPath))
+            {
+                await Vm.LoadProjectFromFileAsync(localPath);
+            }
+        });
+    }
+
+    private async void OnArchiveProjectClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm == null) return;
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select Destination Folder to Archive / Collect Project & Media",
+            AllowMultiple = false
+        });
+
+        string? folderPath = folders.FirstOrDefault()?.TryGetLocalPath();
+        if (!string.IsNullOrWhiteSpace(folderPath))
+        {
+            string targetSubfolder = Path.Combine(folderPath, $"{Vm.ProjectName}_Archive");
+            await Vm.ArchiveProjectToFolderAsync(targetSubfolder);
         }
     }
 
-    private async void OnLoadProjectClick(object? sender, RoutedEventArgs e)
+    private async void OnRelinkMissingMediaClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm == null) return;
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select Media Search Folder to Relink Offline Files",
+            AllowMultiple = false
+        });
+
+        string? folderPath = folders.FirstOrDefault()?.TryGetLocalPath();
+        if (!string.IsNullOrWhiteSpace(folderPath))
+        {
+            Vm.RelinkMissingMediaFromFolder(folderPath);
+        }
+    }
+
+    private async void OnExportInterchangeClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm == null) return;
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Export Timeline for DaVinci Resolve / Premiere Pro",
+            DefaultExtension = "xml",
+            SuggestedFileName = $"{Vm.ProjectName}_Resolve.xml",
+            FileTypeChoices = new[]
+            {
+                new FilePickerFileType("Final Cut Pro 7 XML (.xml)") { Patterns = new[] { "*.xml" } },
+                new FilePickerFileType("SMPTE CMX 3600 EDL (.edl)") { Patterns = new[] { "*.edl" } }
+            }
+        });
+
+        string? localPath = file?.TryGetLocalPath();
+        if (!string.IsNullOrWhiteSpace(localPath))
+        {
+            await Vm.ExportInterchangeAsync(localPath);
+        }
+    }
+
+    private async void OnBrowseLutFileClick(object? sender, RoutedEventArgs e)
     {
         if (Vm == null) return;
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "Open Vortex Cut Studio Project (.vortex)",
+            Title = "Load 3D / 1D Color LUT (.cube)",
             AllowMultiple = false,
             FileTypeFilter = new[]
             {
-                new FilePickerFileType("Vortex Cut Project") { Patterns = new[] { "*.vortex", "*.scproj", "*.aive", "*.json" } }
+                new FilePickerFileType("Adobe / DaVinci Resolve LUT (.cube)") { Patterns = new[] { "*.cube" } },
+                FilePickerFileTypes.All
             }
         });
 
         string? localPath = files.FirstOrDefault()?.TryGetLocalPath();
         if (!string.IsNullOrWhiteSpace(localPath))
         {
-            await Vm.LoadProjectFromFileAsync(localPath);
+            Vm.Inspector.SetLutFilePath(localPath);
+        }
+    }
+
+    private void OnUnsavedModalDiscardClick(object? sender, RoutedEventArgs e)
+    {
+        Vm?.ExecutePendingUnsavedProceedAction();
+    }
+
+    private async void OnUnsavedModalSaveAndContinueClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm == null) return;
+        bool saved;
+        if (!string.IsNullOrWhiteSpace(Vm.CurrentProjectFilePath))
+        {
+            await Vm.SaveProjectToFileAsync(Vm.CurrentProjectFilePath);
+            saved = true;
+        }
+        else
+        {
+            saved = await PromptAndSaveProjectAsAsync();
+        }
+
+        if (saved)
+        {
+            Vm.ExecutePendingUnsavedProceedAction();
         }
     }
 

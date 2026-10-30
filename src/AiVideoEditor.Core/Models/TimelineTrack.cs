@@ -22,4 +22,25 @@ public class TimelineTrack
     public double TrackHeight { get; set; } = 54.0;
     public float Volume { get; set; } = 1.0f;
     public List<TimelineClip> Clips { get; set; } = new();
+
+    public TimelineTrack Clone() => new()
+    {
+        Id = Id,
+        TrackCode = TrackCode,
+        Name = Name,
+        Type = Type,
+        Index = Index,
+        IsMuted = IsMuted,
+        IsSolo = IsSolo,
+        IsLocked = IsLocked,
+        IsVisible = IsVisible,
+        TrackHeight = TrackHeight,
+        Volume = Volume,
+        Clips = Clips.Select(c =>
+        {
+            var copy = c.Clone();
+            copy.Id = c.Id;
+            return copy;
+        }).ToList()
+    };
 }

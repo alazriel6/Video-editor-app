@@ -36,6 +36,8 @@ public sealed class TimelineCanvasControl : Control
     private VideoFrameReader? _frameReader;
 
     private readonly Dictionary<Guid, List<WriteableBitmap>> _filmstripCache = new();
+    private readonly HashSet<Guid> _pendingFilmstripLoads = new();
+    private const int MaxCachedFilmstrips = 40;
 
     public double PlayheadTime { get; private set; }
     public double PixelsPerSecond { get; private set; } = 60.0;
@@ -61,12 +63,15 @@ public sealed class TimelineCanvasControl : Control
         MoveClip,
         TrimClipLeft,
         TrimClipRight,
+        TrimTransitionIn,
+        TrimTransitionOut,
         SlipClipContent,
         PanTimeline
     }
 
     private DragInteraction _dragMode = DragInteraction.None;
     private TimelineClip? _activeClip;
+    private TimelineClip? _activeClipBeforeSnapshot;
     private TimelineClip? _linkedAudioClip;
     private TimelineTrack? _activeClipSourceTrack;
     private Point _dragStartPoint;
@@ -75,6 +80,7 @@ public sealed class TimelineCanvasControl : Control
     private double _dragOrigSourceIn;
     private double _dragOrigSourceOut;
     private double _dragOrigScrollSeconds;
+    private double _dragOrigTransitionDur;
 
     public TimelineCanvasControl()
     {
@@ -204,6 +210,9 @@ public sealed class TimelineCanvasControl : Control
         var hairlinePen = new Pen(new SolidColorBrush(Color.FromRgb(44, 47, 59)), 1);
 
         // 1. Render Tracks & Clips
+        double viewStartSec = Math.Max(0.0, ScrollOffsetSeconds);
+        double viewEndSec = XToTime(bounds.Width);
+
         for (int i = 0; i < _document.Tracks.Count; i++)
         {
             var track = _document.Tracks[i];
@@ -218,8 +227,21 @@ public sealed class TimelineCanvasControl : Control
                 new Point(HeaderWidth, trackTop + TrackHeight),
                 new Point(bounds.Width, trackTop + TrackHeight));
 
-            foreach (var clip in track.Clips)
+            int clipCount = track.Clips.Count;
+            // Draw normal clips first (with viewport culling)
+            for (int c = 0; c < clipCount; c++)
             {
+                var clip = track.Clips[c];
+                if (clip.IsTransitionClip) continue;
+                if ((clip.TimelineStart + clip.Duration) < viewStartSec || clip.TimelineStart > viewEndSec) continue;
+                DrawClipBlock(context, track, clip, trackTop);
+            }
+            // Draw standalone transition blocks on top so handles & badges remain visible over cut boundaries
+            for (int c = 0; c < clipCount; c++)
+            {
+                var clip = track.Clips[c];
+                if (!clip.IsTransitionClip) continue;
+                if ((clip.TimelineStart + clip.Duration) < viewStartSec || clip.TimelineStart > viewEndSec) continue;
                 DrawClipBlock(context, track, clip, trackTop);
             }
 
@@ -353,40 +375,155 @@ public sealed class TimelineCanvasControl : Control
         if (_frameReader == null || !asset.HasVideo || string.IsNullOrWhiteSpace(asset.FilePath) || !File.Exists(asset.FilePath))
             return null;
 
-        try
-        {
-            var skThumbs = ThumbnailStripService.GetOrBuildFilmstrip(asset, _frameReader, 6);
-            if (skThumbs.Count == 0) return null;
-
-            var list = new List<WriteableBitmap>(skThumbs.Count);
-            foreach (var skBmp in skThumbs)
-            {
-                var wb = new WriteableBitmap(
-                    new PixelSize(skBmp.Width, skBmp.Height),
-                    new Vector(96, 96),
-                    PixelFormat.Bgra8888,
-                    AlphaFormat.Premul);
-                using (var locked = wb.Lock())
-                {
-                    int bytes = Math.Min(skBmp.ByteCount, locked.RowBytes * skBmp.Height);
-                    unsafe
-                    {
-                        Buffer.MemoryCopy((void*)skBmp.GetPixels(), (void*)locked.Address, bytes, bytes);
-                    }
-                }
-                list.Add(wb);
-            }
-            _filmstripCache[asset.Id] = list;
-            return list;
-        }
-        catch
-        {
+        if (_pendingFilmstripLoads.Contains(asset.Id))
             return null;
+
+        _pendingFilmstripLoads.Add(asset.Id);
+
+        var reader = _frameReader;
+        Task.Run(() =>
+        {
+            try
+            {
+                var skThumbs = ThumbnailStripService.GetOrBuildFilmstrip(asset, reader, 6);
+                if (skThumbs.Count == 0)
+                {
+                    Avalonia.Threading.Dispatcher.UIThread.Post(() => _pendingFilmstripLoads.Remove(asset.Id));
+                    return;
+                }
+
+                var list = new List<WriteableBitmap>(skThumbs.Count);
+                foreach (var skBmp in skThumbs)
+                {
+                    var wb = new WriteableBitmap(
+                        new PixelSize(skBmp.Width, skBmp.Height),
+                        new Vector(96, 96),
+                        PixelFormat.Bgra8888,
+                        AlphaFormat.Premul);
+                    using (var locked = wb.Lock())
+                    {
+                        int bytes = Math.Min(skBmp.ByteCount, locked.RowBytes * skBmp.Height);
+                        unsafe
+                        {
+                            Buffer.MemoryCopy((void*)skBmp.GetPixels(), (void*)locked.Address, bytes, bytes);
+                        }
+                    }
+                    list.Add(wb);
+                }
+
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    _pendingFilmstripLoads.Remove(asset.Id);
+                    if (_filmstripCache.Count >= MaxCachedFilmstrips)
+                    {
+                        using var enumerator = _filmstripCache.Keys.GetEnumerator();
+                        if (enumerator.MoveNext())
+                        {
+                            _filmstripCache.Remove(enumerator.Current);
+                        }
+                    }
+                    _filmstripCache[asset.Id] = list;
+                    InvalidateVisual();
+                });
+            }
+            catch
+            {
+                Avalonia.Threading.Dispatcher.UIThread.Post(() => _pendingFilmstripLoads.Remove(asset.Id));
+            }
+        });
+
+        return null;
+    }
+
+    public static Color ResolveTransitionColor(string? typeName)
+    {
+        if (string.IsNullOrWhiteSpace(typeName))
+            return Color.FromRgb(59, 130, 246);
+
+        string t = typeName.Trim().ToLowerInvariant();
+        if (t.Contains("black"))
+            return Color.FromRgb(30, 41, 59);
+        if (t.Contains("white") || t.Contains("flash"))
+            return Color.FromRgb(226, 232, 240);
+        if (t.Contains("wipe"))
+            return Color.FromRgb(16, 185, 129);
+        if (t.Contains("slide") || t.Contains("push"))
+            return Color.FromRgb(245, 158, 11);
+        if (t.Contains("fade"))
+            return Color.FromRgb(139, 92, 246);
+        if (t.Contains("zoom") || t.Contains("blur") || t.Contains("glitch") || t.Contains("pixel") || t.Contains("burn") || t.Contains("radial") || t.Contains("rgb"))
+            return Color.FromRgb(236, 72, 153);
+
+        return Color.FromRgb(59, 130, 246);
+    }
+
+    private void DrawStandaloneTransitionBlock(DrawingContext context, TimelineTrack track, TimelineClip clip, double trackTop)
+    {
+        double rawX = TimeToX(clip.TimelineStart);
+        double rawW = Math.Max(12.0, clip.Duration * PixelsPerSecond);
+        if (rawX + rawW < HeaderWidth || rawX > Bounds.Width) return;
+
+        double visibleX = Math.Max(HeaderWidth, rawX);
+        double visibleRight = Math.Min(Bounds.Width, rawX + rawW);
+        double visibleW = Math.Max(2.0, visibleRight - visibleX);
+        var blockRect = new Rect(visibleX, trackTop + 3, visibleW, TrackHeight - 6);
+
+        Color mainColor = ResolveTransitionColor(clip.TransitionType ?? clip.InTransition?.Type);
+        Color borderColor = Color.FromArgb(220, mainColor.R, mainColor.G, mainColor.B);
+        Color bgColor = Color.FromArgb(145, (byte)(mainColor.R / 2), (byte)(mainColor.G / 2), (byte)(mainColor.B / 2));
+
+        bool isSelected = SelectedClip?.Id == clip.Id;
+
+        // Background with subtle rounded corners
+        context.FillRectangle(new SolidColorBrush(bgColor), blockRect, 4f);
+
+        // Center diagonal split ramp pattern
+        var penRamp = new Pen(new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)), 1.2);
+        context.DrawLine(penRamp, new Point(blockRect.Left, blockRect.Bottom), new Point(blockRect.Right, blockRect.Top));
+
+        // Outline / selection border
+        var borderPen = isSelected
+            ? new Pen(new SolidColorBrush(Color.FromRgb(245, 158, 11)), 2.0)
+            : new Pen(new SolidColorBrush(borderColor), 1.2);
+        context.DrawRectangle(borderPen, blockRect, 4f);
+
+        // Edge Drag Handles (Premiere style grip indicators)
+        var gripPen = new Pen(new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)), 1.5);
+        if (blockRect.Width > 18)
+        {
+            context.DrawLine(gripPen, new Point(blockRect.Left + 3, blockRect.Y + 6), new Point(blockRect.Left + 3, blockRect.Bottom - 6));
+            context.DrawLine(gripPen, new Point(blockRect.Right - 3, blockRect.Y + 6), new Point(blockRect.Right - 3, blockRect.Bottom - 6));
+        }
+
+        // Title and Duration Text
+        if (blockRect.Width > 28)
+        {
+            string typeName = clip.TransitionType ?? "Cross Dissolve";
+            string shortLabel = $"⧖ {typeName} ({clip.Duration:0.0#}s)";
+            var text = new FormattedText(
+                shortLabel,
+                CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight,
+                new Typeface("Inter", FontStyle.Normal, FontWeight.Bold),
+                10,
+                new SolidColorBrush(Color.FromRgb(243, 244, 246)))
+            {
+                MaxTextWidth = Math.Max(10, blockRect.Width - 10),
+                MaxLineCount = 1,
+                Trimming = TextTrimming.CharacterEllipsis
+            };
+            context.DrawText(text, new Point(blockRect.X + 6, blockRect.Y + (blockRect.Height - text.Height) / 2));
         }
     }
 
     private void DrawClipBlock(DrawingContext context, TimelineTrack track, TimelineClip clip, double trackTop)
     {
+        if (clip.IsTransitionClip)
+        {
+            DrawStandaloneTransitionBlock(context, track, clip, trackTop);
+            return;
+        }
+
         double rawX = TimeToX(clip.TimelineStart);
         double rawW = Math.Max(4.0, clip.Duration * PixelsPerSecond);
         if (rawX + rawW < HeaderWidth || rawX > Bounds.Width) return;
@@ -397,17 +534,22 @@ public sealed class TimelineCanvasControl : Control
         double visibleW = Math.Max(2.0, visibleRight - visibleX);
         var clipRect = new Rect(visibleX, trackTop + 2, visibleW, TrackHeight - 4);
 
-        (Color fillCol, Color borderCol) = track.Type switch
+        (Color fillCol, Color borderCol) = clip.Kind switch
         {
-            TrackType.Video => (Color.FromRgb(37, 75, 124), Color.FromRgb(74, 125, 191)),    // #254B7C
-            TrackType.Audio => (Color.FromRgb(30, 94, 74), Color.FromRgb(56, 148, 118)),     // #1E5E4A
-            _ => (Color.FromRgb(124, 77, 37), Color.FromRgb(181, 118, 63))                   // #7C4D25
+            ClipKind.AdjustmentLayer => (Color.FromRgb(109, 40, 217), Color.FromRgb(192, 132, 252)), // Studio Violet (#6D28D9)
+            ClipKind.CompoundClip => (Color.FromRgb(15, 118, 110), Color.FromRgb(45, 212, 191)),     // Studio Teal (#0F766E)
+            _ => track.Type switch
+            {
+                TrackType.Video => (Color.FromRgb(37, 75, 124), Color.FromRgb(74, 125, 191)),        // #254B7C
+                TrackType.Audio => (Color.FromRgb(30, 94, 74), Color.FromRgb(56, 148, 118)),         // #1E5E4A
+                _ => (Color.FromRgb(124, 77, 37), Color.FromRgb(181, 118, 63))                       // #7C4D25
+            }
         };
 
         bool isSelected = SelectedClip?.Id == clip.Id;
         context.FillRectangle(new SolidColorBrush(fillCol), clipRect, 3f);
 
-        var asset = _document?.MediaPool.FirstOrDefault(m => m.Id == clip.MediaAssetId);
+        var asset = _document?.FindAsset(clip.MediaAssetId);
 
         // Draw Real Video Filmstrip Thumbnails on Video Tracks
         if (asset != null && track.Type == TrackType.Video && visibleW > 28)
@@ -422,10 +564,11 @@ public sealed class TimelineCanvasControl : Control
                     using (context.PushClip(new Rect(clipRect.X + 1, clipRect.Y + 16, Math.Max(1, clipRect.Width - 2), thumbH)))
                     {
                         int tileCount = Math.Max(1, (int)Math.Ceiling(rawW / thumbW));
-                        for (int t = 0; t < tileCount; t++)
+                        int startTile = Math.Clamp((int)Math.Floor((HeaderWidth - rawX) / thumbW), 0, tileCount - 1);
+                        int endTile = Math.Clamp((int)Math.Ceiling((Bounds.Width - rawX) / thumbW), 0, tileCount - 1);
+                        for (int t = startTile; t <= endTile; t++)
                         {
                             double tileX = rawX + t * thumbW;
-                            if (tileX + thumbW < HeaderWidth || tileX > Bounds.Width) continue;
                             int idx = (t * thumbs.Count) / Math.Max(1, tileCount);
                             var bmp = thumbs[Math.Clamp(idx, 0, thumbs.Count - 1)];
                             var dest = new Rect(tileX, clipRect.Y + 16, thumbW - 1, thumbH);
@@ -451,11 +594,12 @@ public sealed class TimelineCanvasControl : Control
             double bottomY = clipRect.Bottom - 2;
             double maxWaveH = track.Type == TrackType.Audio ? clipRect.Height * 0.68 : clipRect.Height * 0.35;
 
-            for (int b = 0; b < numBars; b++)
+            int startBar = Math.Clamp((int)Math.Floor((HeaderWidth - rawX) / barStep), 0, numBars - 1);
+            int endBar = Math.Clamp((int)Math.Ceiling((Bounds.Width - rawX) / barStep), 0, numBars - 1);
+
+            for (int b = startBar; b <= endBar; b++)
             {
                 double bx = rawX + b * barStep;
-                if (bx < HeaderWidth || bx > Bounds.Width) continue;
-
                 int peakIdx = (b * asset.WaveformPeaks.Length) / numBars;
                 float peak = asset.WaveformPeaks[Math.Clamp(peakIdx, 0, asset.WaveformPeaks.Length - 1)];
                 double barH = Math.Max(1.5, peak * maxWaveH);
@@ -463,22 +607,66 @@ public sealed class TimelineCanvasControl : Control
             }
         }
 
-        // Draw Transition boxes & diagonal fade ramps
+        // Draw Transition boxes & diagonal fade ramps with interactive grip handles
         if (clip.InTransition != null && clip.InTransition.Duration > 0.04)
         {
-            double transW = Math.Min(visibleW * 0.45, clip.InTransition.Duration * PixelsPerSecond);
+            double transW = Math.Min(visibleW * 0.48, clip.InTransition.Duration * PixelsPerSecond);
             var trRect = new Rect(clipRect.X, clipRect.Y, transW, clipRect.Height);
-            context.FillRectangle(new SolidColorBrush(Color.FromArgb(95, 59, 130, 246)), trRect);
-            context.DrawLine(new Pen(new SolidColorBrush(Color.FromRgb(243, 244, 246)), 1),
+            Color transColor = ResolveTransitionColor(clip.InTransition.Type);
+
+            context.FillRectangle(new SolidColorBrush(Color.FromArgb(90, transColor.R, transColor.G, transColor.B)), trRect);
+            context.DrawLine(new Pen(new SolidColorBrush(Color.FromArgb(200, 243, 244, 246)), 1.2),
                 new Point(trRect.Left, trRect.Bottom), new Point(trRect.Right, trRect.Top));
+
+            // Interactive grip handle line
+            context.DrawLine(new Pen(new SolidColorBrush(Color.FromArgb(220, transColor.R, transColor.G, transColor.B)), 1.5),
+                new Point(trRect.Right, trRect.Top + 2), new Point(trRect.Right, trRect.Bottom - 2));
+
+            if (transW > 26)
+            {
+                var badgeText = new FormattedText(
+                    $"{clip.InTransition.Duration:0.0#}s",
+                    CultureInfo.InvariantCulture,
+                    FlowDirection.LeftToRight,
+                    new Typeface("Inter", FontStyle.Normal, FontWeight.SemiBold),
+                    9,
+                    new SolidColorBrush(Color.FromRgb(243, 244, 246)))
+                {
+                    MaxTextWidth = transW - 4,
+                    MaxLineCount = 1
+                };
+                context.DrawText(badgeText, new Point(trRect.Left + 4, trRect.Bottom - 14));
+            }
         }
         if (clip.OutTransition != null && clip.OutTransition.Duration > 0.04)
         {
-            double transW = Math.Min(visibleW * 0.45, clip.OutTransition.Duration * PixelsPerSecond);
+            double transW = Math.Min(visibleW * 0.48, clip.OutTransition.Duration * PixelsPerSecond);
             var trRect = new Rect(clipRect.Right - transW, clipRect.Y, transW, clipRect.Height);
-            context.FillRectangle(new SolidColorBrush(Color.FromArgb(95, 59, 130, 246)), trRect);
-            context.DrawLine(new Pen(new SolidColorBrush(Color.FromRgb(243, 244, 246)), 1),
+            Color transColor = ResolveTransitionColor(clip.OutTransition.Type);
+
+            context.FillRectangle(new SolidColorBrush(Color.FromArgb(90, transColor.R, transColor.G, transColor.B)), trRect);
+            context.DrawLine(new Pen(new SolidColorBrush(Color.FromArgb(200, 243, 244, 246)), 1.2),
                 new Point(trRect.Left, trRect.Top), new Point(trRect.Right, trRect.Bottom));
+
+            // Interactive grip handle line
+            context.DrawLine(new Pen(new SolidColorBrush(Color.FromArgb(220, transColor.R, transColor.G, transColor.B)), 1.5),
+                new Point(trRect.Left, trRect.Top + 2), new Point(trRect.Left, trRect.Bottom - 2));
+
+            if (transW > 26)
+            {
+                var badgeText = new FormattedText(
+                    $"{clip.OutTransition.Duration:0.0#}s",
+                    CultureInfo.InvariantCulture,
+                    FlowDirection.LeftToRight,
+                    new Typeface("Inter", FontStyle.Normal, FontWeight.SemiBold),
+                    9,
+                    new SolidColorBrush(Color.FromRgb(243, 244, 246)))
+                {
+                    MaxTextWidth = transW - 4,
+                    MaxLineCount = 1
+                };
+                context.DrawText(badgeText, new Point(trRect.Right - badgeText.Width - 4, trRect.Bottom - 14));
+            }
         }
 
         // Clip Header Strip & Title
@@ -787,7 +975,7 @@ public sealed class TimelineCanvasControl : Control
         {
             var track = _document.Tracks[hitTrackIdx];
             double clickTime = XToTime(pt.X);
-            var hitClip = track.Clips.LastOrDefault(c => clickTime >= c.TimelineStart && clickTime <= c.TimelineStart + c.Duration);
+            var hitClip = FindClipAtTime(track, clickTime);
 
             if (hitClip != null)
             {
@@ -801,7 +989,7 @@ public sealed class TimelineCanvasControl : Control
                     return;
                 }
 
-                if (ActiveTool == NleTimelineTool.Razor && !track.IsLocked && _timelineService != null)
+                if (ActiveTool == NleTimelineTool.Razor && !track.IsLocked && _timelineService != null && _document != null && !hitClip.IsTransitionClip)
                 {
                     double splitTime = SnapTimeIfEnabled(clickTime, hitClip);
                     _timelineService.CutClipAt(_document, hitClip.Id, splitTime);
@@ -813,6 +1001,7 @@ public sealed class TimelineCanvasControl : Control
                 if (track.IsLocked) return;
 
                 _activeClip = hitClip;
+                _activeClipBeforeSnapshot = hitClip.Clone();
                 _activeClipSourceTrack = track;
                 _linkedAudioClip = FindLinkedCompanionClip(track, hitClip);
                 _dragStartPoint = pt;
@@ -823,7 +1012,7 @@ public sealed class TimelineCanvasControl : Control
 
                 e.Pointer.Capture(this);
 
-                if (ActiveTool == NleTimelineTool.Slip)
+                if (ActiveTool == NleTimelineTool.Slip && !hitClip.IsTransitionClip)
                 {
                     _dragMode = DragInteraction.SlipClipContent;
                     return;
@@ -831,6 +1020,31 @@ public sealed class TimelineCanvasControl : Control
 
                 double clipLeftX = TimeToX(hitClip.TimelineStart);
                 double clipRightX = TimeToX(hitClip.TimelineStart + hitClip.Duration);
+
+                // Check transition trim handles on regular clips
+                if (!hitClip.IsTransitionClip && hitClip.InTransition != null && hitClip.InTransition.Duration > 0.04)
+                {
+                    double transInW = Math.Min((clipRightX - clipLeftX) * 0.48, hitClip.InTransition.Duration * PixelsPerSecond);
+                    double handleX = clipLeftX + transInW;
+                    if (Math.Abs(pt.X - handleX) <= 6.0)
+                    {
+                        _dragMode = DragInteraction.TrimTransitionIn;
+                        _dragOrigTransitionDur = hitClip.InTransition.Duration;
+                        return;
+                    }
+                }
+
+                if (!hitClip.IsTransitionClip && hitClip.OutTransition != null && hitClip.OutTransition.Duration > 0.04)
+                {
+                    double transOutW = Math.Min((clipRightX - clipLeftX) * 0.48, hitClip.OutTransition.Duration * PixelsPerSecond);
+                    double handleX = clipRightX - transOutW;
+                    if (Math.Abs(pt.X - handleX) <= 6.0)
+                    {
+                        _dragMode = DragInteraction.TrimTransitionOut;
+                        _dragOrigTransitionDur = hitClip.OutTransition.Duration;
+                        return;
+                    }
+                }
 
                 if (Math.Abs(pt.X - clipLeftX) <= TrimHandleWidth)
                     _dragMode = DragInteraction.TrimClipLeft;
@@ -904,11 +1118,16 @@ public sealed class TimelineCanvasControl : Control
         AddTransOption("Cross Dissolve (0.5s)", "Trans:CrossDissolve");
         AddTransOption("Dip to Black (0.5s)", "Trans:DipToBlack");
         AddTransOption("Dip to White (0.5s)", "Trans:DipToWhite");
+        AddTransOption("Wipe (0.5s)", "Trans:Wipe");
+        AddTransOption("Slide (0.5s)", "Trans:Slide");
         AddTransOption("Zoom In Blur (0.5s)", "Trans:ZoomBlur");
         AddTransOption("Flash Cut (0.3s)", "Trans:FlashCut");
         transSub.Items.Add(new Separator());
         AddTransOption("Remove Transitions", "Trans:None");
         menu.Items.Add(transSub);
+
+        AddAction("+ Standalone Transition Block (Ctrl+D)", "AddStandaloneTransitionBlock");
+        menu.Items.Add(new Separator());
 
         AddAction("Clear All Keyframes on Clip", "ClearKeyframes");
         AddAction("Reset All Effects & Color", "ResetAllEffectsAndColor");
@@ -932,6 +1151,7 @@ public sealed class TimelineCanvasControl : Control
         AddAction("Paste Clip Here (Ctrl+V)", "PasteAtCursor");
         AddAction("Close Gap (Ripple Delete Blank Space)", "CloseGapHere");
         AddAction("Insert Text / Title Here", "InsertTextHere");
+        AddAction("Insert Transition Block Here", "AddStandaloneTransitionBlockHere");
         menu.Items.Add(new Separator());
         AddAction("Add Video Track", "AddVideoTrack");
         AddAction("Add Audio Track", "AddAudioTrack");
@@ -1015,12 +1235,25 @@ public sealed class TimelineCanvasControl : Control
                 {
                     var track = _document.Tracks[hoverTrackIdx];
                     double hoverTime = XToTime(pt.X);
-                    var hoverClip = track.Clips.LastOrDefault(c => hoverTime >= c.TimelineStart && hoverTime <= c.TimelineStart + c.Duration);
+                    var hoverClip = FindClipAtTime(track, hoverTime);
                     if (hoverClip != null)
                     {
                         double lx = TimeToX(hoverClip.TimelineStart);
                         double rx = TimeToX(hoverClip.TimelineStart + hoverClip.Duration);
-                        if (Math.Abs(pt.X - lx) <= TrimHandleWidth || Math.Abs(pt.X - rx) <= TrimHandleWidth)
+
+                        bool isTransHandle = false;
+                        if (!hoverClip.IsTransitionClip && hoverClip.InTransition != null && hoverClip.InTransition.Duration > 0.04)
+                        {
+                            double transInW = Math.Min((rx - lx) * 0.48, hoverClip.InTransition.Duration * PixelsPerSecond);
+                            if (Math.Abs(pt.X - (lx + transInW)) <= 6.0) isTransHandle = true;
+                        }
+                        if (!hoverClip.IsTransitionClip && hoverClip.OutTransition != null && hoverClip.OutTransition.Duration > 0.04)
+                        {
+                            double transOutW = Math.Min((rx - lx) * 0.48, hoverClip.OutTransition.Duration * PixelsPerSecond);
+                            if (Math.Abs(pt.X - (rx - transOutW)) <= 6.0) isTransHandle = true;
+                        }
+
+                        if (Math.Abs(pt.X - lx) <= TrimHandleWidth || Math.Abs(pt.X - rx) <= TrimHandleWidth || isTransHandle)
                         {
                             Cursor = new Cursor(StandardCursorType.SizeWestEast);
                             return;
@@ -1130,6 +1363,50 @@ public sealed class TimelineCanvasControl : Control
             TimelineMutated?.Invoke();
             InvalidateVisual();
         }
+        else if (_dragMode == DragInteraction.TrimTransitionIn)
+        {
+            if (_activeClip.InTransition != null)
+            {
+                double maxDur = Math.Max(0.1, _activeClip.Duration * 0.48);
+                double newDur = Math.Clamp(_dragOrigTransitionDur + deltaSeconds, 0.05, maxDur);
+                double rounded = Math.Round(newDur, 3);
+                _activeClip.InTransition.Duration = rounded;
+                _activeClip.FadeInDuration = rounded;
+                ClipSelected?.Invoke(_activeClip);
+                TimelineMutated?.Invoke();
+                InvalidateVisual();
+            }
+        }
+        else if (_dragMode == DragInteraction.TrimTransitionOut)
+        {
+            if (_activeClip.OutTransition != null)
+            {
+                double maxDur = Math.Max(0.1, _activeClip.Duration * 0.48);
+                double newDur = Math.Clamp(_dragOrigTransitionDur - deltaSeconds, 0.05, maxDur);
+                double rounded = Math.Round(newDur, 3);
+                _activeClip.OutTransition.Duration = rounded;
+                _activeClip.FadeOutDuration = rounded;
+                ClipSelected?.Invoke(_activeClip);
+                TimelineMutated?.Invoke();
+                InvalidateVisual();
+            }
+        }
+    }
+
+    private static TimelineClip? FindClipAtTime(TimelineTrack track, double timeSec)
+    {
+        TimelineClip? fallback = null;
+        for (int i = track.Clips.Count - 1; i >= 0; i--)
+        {
+            var clip = track.Clips[i];
+            if (timeSec >= clip.TimelineStart && timeSec <= clip.TimelineStart + clip.Duration)
+            {
+                if (clip.IsTransitionClip)
+                    return clip;
+                fallback ??= clip;
+            }
+        }
+        return fallback;
     }
 
     private double SnapTimeIfEnabled(double candidateTime, TimelineClip ignoreClip)
@@ -1139,33 +1416,45 @@ public sealed class TimelineCanvasControl : Control
             return candidateTime;
 
         double thresholdSec = 8.0 / PixelsPerSecond;
-        var snapTargets = new List<double> { 0.0, PlayheadTime };
+        double bestDist = double.MaxValue;
+        double bestSnappedTime = candidateTime;
+        double? bestSnapLine = null;
 
-        foreach (var track in _document.Tracks)
+        void TestSnap(double target)
         {
-            foreach (var clip in track.Clips)
+            double dist1 = Math.Abs(candidateTime - target);
+            if (dist1 <= thresholdSec && dist1 < bestDist)
             {
+                bestDist = dist1;
+                bestSnappedTime = target;
+                bestSnapLine = target;
+            }
+            double dist2 = Math.Abs((candidateTime + ignoreClip.Duration) - target);
+            if (dist2 <= thresholdSec && dist2 < bestDist)
+            {
+                bestDist = dist2;
+                bestSnappedTime = Math.Max(0, target - ignoreClip.Duration);
+                bestSnapLine = target;
+            }
+        }
+
+        TestSnap(0.0);
+        TestSnap(PlayheadTime);
+
+        for (int t = 0; t < _document.Tracks.Count; t++)
+        {
+            var track = _document.Tracks[t];
+            for (int c = 0; c < track.Clips.Count; c++)
+            {
+                var clip = track.Clips[c];
                 if (clip.Id == ignoreClip.Id || clip.Id == _linkedAudioClip?.Id) continue;
-                snapTargets.Add(clip.TimelineStart);
-                snapTargets.Add(clip.TimelineStart + clip.Duration);
+                TestSnap(clip.TimelineStart);
+                TestSnap(clip.TimelineStart + clip.Duration);
             }
         }
 
-        foreach (double target in snapTargets)
-        {
-            if (Math.Abs(candidateTime - target) <= thresholdSec)
-            {
-                _activeSnapLineTime = target;
-                return target;
-            }
-            if (Math.Abs((candidateTime + ignoreClip.Duration) - target) <= thresholdSec)
-            {
-                _activeSnapLineTime = target;
-                return Math.Max(0, target - ignoreClip.Duration);
-            }
-        }
-
-        return candidateTime;
+        _activeSnapLineTime = bestSnapLine;
+        return bestSnappedTime;
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -1176,7 +1465,19 @@ public sealed class TimelineCanvasControl : Control
 
         if (_activeClip != null && _undoRedo != null)
         {
-            if (_dragMode == DragInteraction.MoveClip && Math.Abs(_activeClip.TimelineStart - _dragOrigStart) > 0.01)
+            if ((_dragMode == DragInteraction.TrimTransitionIn || _dragMode == DragInteraction.TrimTransitionOut)
+                && _activeClipBeforeSnapshot != null)
+            {
+                _undoRedo.RecordOrCoalesceClipEdit(
+                    _activeClip,
+                    "TrimTransition",
+                    "Trim Transition Duration",
+                    _activeClipBeforeSnapshot,
+                    _activeClip.Clone(),
+                    c => ClipSelected?.Invoke(c));
+                ClipSelected?.Invoke(_activeClip);
+            }
+            else if (_dragMode == DragInteraction.MoveClip && Math.Abs(_activeClip.TimelineStart - _dragOrigStart) > 0.01)
             {
                 double finalStart = _activeClip.TimelineStart;
                 _activeClip.TimelineStart = _dragOrigStart;
@@ -1199,6 +1500,7 @@ public sealed class TimelineCanvasControl : Control
 
         _dragMode = DragInteraction.None;
         _activeClip = null;
+        _activeClipBeforeSnapshot = null;
         _linkedAudioClip = null;
         _activeClipSourceTrack = null;
         SetActiveTool(ActiveTool);

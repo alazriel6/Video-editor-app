@@ -13,13 +13,14 @@ public class TimelineService
                 : (doc.Tracks.FirstOrDefault(t => t.TrackCode == "A2") ?? doc.Tracks.LastOrDefault(t => t.Type == TrackType.Audio));
 
             audioTrack ??= doc.Tracks.First();
-            double start = atTime ?? (audioTrack.Clips.Count > 0 ? audioTrack.Clips.Max(c => c.TimelineStart + c.Duration) : 0.0);
+            double start = atTime ?? (audioTrack.Clips.Where(c => c.Kind != ClipKind.Transition).Select(c => c.TimelineStart + c.Duration).DefaultIfEmpty(0.0).Max());
             double inPt = Math.Max(0, asset.MarkIn);
             double outPt = asset.MarkOut > inPt + 0.1 ? asset.MarkOut : asset.Duration;
             double dur = Math.Max(0.2, outPt - inPt);
 
             var aClip = new TimelineClip
             {
+                Kind = ClipKind.Media,
                 MediaAssetId = asset.Id,
                 Label = asset.Name,
                 TimelineStart = Math.Round(start, 3),
@@ -38,9 +39,10 @@ public class TimelineService
                           ?? doc.Tracks.LastOrDefault(t => t.Type == TrackType.Video)
                           ?? doc.Tracks.First();
 
-            double startPos = atTime ?? (v1Track.Clips.Count > 0
-                ? v1Track.Clips.Max(c => c.TimelineStart + c.Duration)
-                : 0.0);
+            double startPos = atTime ?? (v1Track.Clips.Where(c => c.Kind != ClipKind.Transition)
+                .Select(c => c.TimelineStart + c.Duration)
+                .DefaultIfEmpty(0.0)
+                .Max());
 
             double inPt = Math.Max(0, asset.MarkIn);
             double outPt = asset.MarkOut > inPt + 0.1 ? asset.MarkOut : asset.Duration;
@@ -48,6 +50,7 @@ public class TimelineService
 
             var vClip = new TimelineClip
             {
+                Kind = ClipKind.Media,
                 MediaAssetId = asset.Id,
                 Label = asset.Name,
                 TimelineStart = Math.Round(startPos, 3),
@@ -66,6 +69,7 @@ public class TimelineService
                 {
                     var linkedAudioClip = new TimelineClip
                     {
+                        Kind = ClipKind.Media,
                         MediaAssetId = asset.Id,
                         LinkedClipId = vClip.Id,
                         Label = $"{asset.Name} [Audio]",
@@ -89,6 +93,118 @@ public class TimelineService
             return vClip;
         }
     }
+
+    /// <summary>
+    /// Creates a standalone Premiere Pro-style draggable Transition Block on a timeline track.
+    /// Can be placed across a cut between two clips, at a clip's start/end, or anywhere on any track.
+    /// </summary>
+    public TimelineClip AddStandaloneTransitionBlock(
+        ProjectDocument doc,
+        string transitionType,
+        double timelineTime,
+        double duration,
+        TimelineTrack? targetTrack)
+    {
+        int? idx = targetTrack != null ? doc.Tracks.IndexOf(targetTrack) : null;
+        if (idx.HasValue && idx.Value < 0) idx = null;
+        return AddStandaloneTransitionBlock(doc, transitionType, timelineTime, duration, idx);
+    }
+
+    public TimelineClip AddStandaloneTransitionBlock(
+        ProjectDocument doc,
+        string transitionType,
+        double timelineTime,
+        double duration = 1.0,
+        int? targetTrackIndex = null)
+    {
+        bool isAudioTrans = transitionType is "ConstantPowerCrossfade" or "ExponentialFadeIn" or "ExponentialFadeOut";
+        TimelineTrack? targetTrack = null;
+
+        if (targetTrackIndex.HasValue && targetTrackIndex.Value >= 0 && targetTrackIndex.Value < doc.Tracks.Count)
+        {
+            var candidate = doc.Tracks[targetTrackIndex.Value];
+            if (!candidate.IsLocked)
+                targetTrack = candidate;
+        }
+
+        if (targetTrack == null)
+        {
+            if (isAudioTrans)
+            {
+                targetTrack = doc.Tracks.FirstOrDefault(t => t.TrackCode == "A1" && !t.IsLocked)
+                              ?? doc.Tracks.FirstOrDefault(t => t.Type == TrackType.Audio && !t.IsLocked);
+            }
+            else
+            {
+                targetTrack = doc.Tracks.FirstOrDefault(t => t.TrackCode == "V1" && !t.IsLocked)
+                              ?? doc.Tracks.FirstOrDefault(t => t.Type == TrackType.Video && !t.IsLocked);
+            }
+        }
+
+        targetTrack ??= doc.Tracks.First(t => !t.IsLocked);
+
+        duration = Math.Clamp(duration, 0.1, 10.0);
+
+        // Snap to nearby cut or clip edge if within 0.35s, otherwise center around timelineTime (or start at 0)
+        double blockStart = Math.Max(0, timelineTime - duration * 0.5);
+        var mediaClips = targetTrack.Clips.Where(c => c.Kind != ClipKind.Transition).OrderBy(c => c.TimelineStart).ToList();
+        foreach (var mc in mediaClips)
+        {
+            double cutEnd = mc.TimelineStart + mc.Duration;
+            if (Math.Abs(timelineTime - cutEnd) <= 0.4)
+            {
+                // Check if another clip starts right after cutEnd -> center across the cut joint!
+                bool hasOutgoingIncoming = mediaClips.Any(other => Math.Abs(other.TimelineStart - cutEnd) <= 0.15);
+                blockStart = hasOutgoingIncoming
+                    ? Math.Max(0, cutEnd - duration * 0.5)
+                    : Math.Max(mc.TimelineStart, cutEnd - duration);
+                break;
+            }
+            if (Math.Abs(timelineTime - mc.TimelineStart) <= 0.4)
+            {
+                blockStart = mc.TimelineStart;
+                break;
+            }
+        }
+
+        string displayTitle = FormatTransitionTitle(transitionType);
+
+        var transClip = new TimelineClip
+        {
+            Kind = ClipKind.Transition,
+            TransitionEffectType = transitionType,
+            IsAudioTransition = isAudioTrans || targetTrack.Type == TrackType.Audio,
+            Label = displayTitle,
+            TimelineStart = Math.Round(blockStart, 3),
+            Duration = Math.Round(duration, 3),
+            SourceIn = 0,
+            SourceOut = Math.Round(duration, 3),
+            InTransition = new TransitionSpec { Type = transitionType, Duration = duration }
+        };
+
+        targetTrack.Clips.Add(transClip);
+        return transClip;
+    }
+
+    public static string FormatTransitionTitle(string transitionType) => transitionType switch
+    {
+        "CrossDissolve" or "CrossFade" => "Cross Dissolve",
+        "DipToBlack" => "Dip to Black",
+        "DipToWhite" => "Dip to White",
+        "WhipZoom" or "ZoomBlur" or "ZoomIn" => "Whip Zoom",
+        "SlideLeft" or "PushLeft" => "Push Left",
+        "PushRight" => "Push Right",
+        "PushUp" => "Push Up",
+        "PushDown" => "Push Down",
+        "DirectionalWipe" or "WipeLeft" => "Directional Wipe",
+        "FlashCut" => "Flash Cut",
+        "LumaFade" => "Luma Fade",
+        "Glitch" => "Digital Glitch",
+        "ConstantPowerCrossfade" => "Constant Power Crossfade",
+        "ExponentialFadeIn" => "Exponential Fade In",
+        "ExponentialFadeOut" => "Exponential Fade Out",
+        _ => transitionType
+    };
 
     public bool CutClipAt(ProjectDocument doc, Guid clipId, double timelineTime)
     {
@@ -136,7 +252,8 @@ public class TimelineService
         {
             if (track.IsLocked) continue;
             var clipsAtTime = track.Clips
-                .Where(c => playheadTime > c.TimelineStart + 0.04
+                .Where(c => c.Kind != ClipKind.Transition
+                            && playheadTime > c.TimelineStart + 0.04
                             && playheadTime < c.TimelineStart + c.Duration - 0.04)
                 .ToList();
 
@@ -159,7 +276,7 @@ public class TimelineService
             double maxEnd = track.Clips.Count > 0 ? track.Clips.Max(c => c.TimelineStart + c.Duration) : 0;
             for (double t = intervalSeconds; t < maxEnd - 0.2; t += intervalSeconds)
             {
-                var clip = track.Clips.FirstOrDefault(c => t > c.TimelineStart + 0.1 && t < c.TimelineStart + c.Duration - 0.1);
+                var clip = track.Clips.FirstOrDefault(c => c.Kind != ClipKind.Transition && t > c.TimelineStart + 0.1 && t < c.TimelineStart + c.Duration - 0.1);
                 if (clip != null && SplitClipInternal(track, clip, t, out _))
                 {
                     splits++;
@@ -175,7 +292,7 @@ public class TimelineService
                      ?? doc.Tracks.FirstOrDefault(t => t.Type == TrackType.Video && !t.IsLocked);
         if (vTrack == null) return null;
 
-        var activeClip = vTrack.Clips.FirstOrDefault(c => playheadTime >= c.TimelineStart && playheadTime <= c.TimelineStart + c.Duration);
+        var activeClip = vTrack.Clips.FirstOrDefault(c => c.Kind == ClipKind.Media && playheadTime >= c.TimelineStart && playheadTime <= c.TimelineStart + c.Duration);
         if (activeClip == null) return null;
 
         double freezeSrcTime = activeClip.SourceIn + (playheadTime - activeClip.TimelineStart) * activeClip.Speed;
@@ -242,8 +359,16 @@ public class TimelineService
 
         if (targetTrack == null)
         {
-            if (copy.TextData != null)
+            if (copy.Kind == ClipKind.Transition)
+            {
+                targetTrack = copy.IsAudioTransition
+                    ? doc.Tracks.FirstOrDefault(t => t.Type == TrackType.Audio && !t.IsLocked)
+                    : doc.Tracks.FirstOrDefault(t => t.TrackCode == "V1" && !t.IsLocked) ?? doc.Tracks.FirstOrDefault(t => t.Type == TrackType.Video && !t.IsLocked);
+            }
+            else if (copy.TextData != null)
+            {
                 targetTrack = doc.Tracks.FirstOrDefault(t => t.Type == TrackType.Text && !t.IsLocked);
+            }
             else
             {
                 var asset = doc.MediaPool.FirstOrDefault(m => m.Id == copy.MediaAssetId);
@@ -281,7 +406,7 @@ public class TimelineService
         var track = doc.Tracks[trackIndex];
         if (track.IsLocked || track.Clips.Count == 0) return false;
 
-        var ordered = track.Clips.OrderBy(c => c.TimelineStart).ToList();
+        var ordered = track.Clips.Where(c => c.Kind != ClipKind.Transition).OrderBy(c => c.TimelineStart).ToList();
         if (ordered.Any(c => clickedTime >= c.TimelineStart && clickedTime <= c.TimelineStart + c.Duration))
             return false;
 
@@ -319,7 +444,6 @@ public class TimelineService
                 var aTrack = doc.Tracks.FirstOrDefault(t => t.Type == TrackType.Audio && !t.IsLocked);
                 if (aTrack == null) return null;
 
-                // Check if linked audio clip already exists
                 if (vClip.LinkedClipId.HasValue)
                 {
                     vClip.LinkedClipId = null;
@@ -378,7 +502,7 @@ public class TimelineService
         int count = 0;
         foreach (var track in doc.Tracks.Where(t => t.Type == TrackType.Video && !t.IsLocked))
         {
-            foreach (var clip in track.Clips)
+            foreach (var clip in track.Clips.Where(c => c.Kind != ClipKind.Transition))
             {
                 double kStart = Math.Clamp(startSeconds - clip.TimelineStart, 0.0, clip.Duration);
                 double kEnd = Math.Clamp(endSeconds - clip.TimelineStart, Math.Min(0.2, clip.Duration), clip.Duration);
@@ -442,7 +566,7 @@ public class TimelineService
 
         if (rippleInsert)
         {
-            foreach (var existing in targetTrack.Clips.ToList())
+            foreach (var existing in targetTrack.Clips.Where(c => c.Kind != ClipKind.Transition).ToList())
             {
                 if (playheadTime > existing.TimelineStart + 0.03 && playheadTime < existing.TimelineStart + existing.Duration - 0.03)
                 {
@@ -457,17 +581,17 @@ public class TimelineService
         else
         {
             double endOverwrite = playheadTime + clipDur;
-            foreach (var existing in targetTrack.Clips.ToList())
+            foreach (var existing in targetTrack.Clips.Where(c => c.Kind != ClipKind.Transition).ToList())
             {
                 if (playheadTime > existing.TimelineStart + 0.03 && playheadTime < existing.TimelineStart + existing.Duration - 0.03)
                     SplitClipInternal(targetTrack, existing, playheadTime, out _);
             }
-            foreach (var existing in targetTrack.Clips.ToList())
+            foreach (var existing in targetTrack.Clips.Where(c => c.Kind != ClipKind.Transition).ToList())
             {
                 if (endOverwrite > existing.TimelineStart + 0.03 && endOverwrite < existing.TimelineStart + existing.Duration - 0.03)
                     SplitClipInternal(targetTrack, existing, endOverwrite, out _);
             }
-            targetTrack.Clips.RemoveAll(c => c.TimelineStart >= playheadTime - 0.02 && (c.TimelineStart + c.Duration) <= endOverwrite + 0.02);
+            targetTrack.Clips.RemoveAll(c => c.Kind != ClipKind.Transition && c.TimelineStart >= playheadTime - 0.02 && (c.TimelineStart + c.Duration) <= endOverwrite + 0.02);
         }
 
         return AddAssetWithLinkedAudioToTimeline(doc, asset, playheadTime) ?? new TimelineClip();
@@ -486,9 +610,12 @@ public class TimelineService
                 Guid? linkedId = clip.LinkedClipId;
 
                 track.Clips.Remove(clip);
-                foreach (var after in track.Clips.Where(c => c.TimelineStart >= start - 0.01))
+                if (clip.Kind != ClipKind.Transition)
                 {
-                    after.TimelineStart = Math.Max(0, Math.Round(after.TimelineStart - dur, 3));
+                    foreach (var after in track.Clips.Where(c => c.TimelineStart >= start - 0.01))
+                    {
+                        after.TimelineStart = Math.Max(0, Math.Round(after.TimelineStart - dur, 3));
+                    }
                 }
 
                 if (doc.LinkVideoAndAudio && linkedId.HasValue)
@@ -523,14 +650,14 @@ public class TimelineService
         {
             if (track.IsLocked) continue;
 
-            foreach (var clip in track.Clips.ToList())
+            foreach (var clip in track.Clips.Where(c => c.Kind != ClipKind.Transition).ToList())
             {
                 if (start > clip.TimelineStart + 0.02 && start < clip.TimelineStart + clip.Duration - 0.02)
                 {
                     SplitClipInternal(track, clip, start, out _);
                 }
             }
-            foreach (var clip in track.Clips.ToList())
+            foreach (var clip in track.Clips.Where(c => c.Kind != ClipKind.Transition).ToList())
             {
                 if (end > clip.TimelineStart + 0.02 && end < clip.TimelineStart + clip.Duration - 0.02)
                 {
@@ -580,7 +707,7 @@ public class TimelineService
                            ?? doc.Tracks.FirstOrDefault(t => t.Clips.Count > 0);
         if (primaryTrack == null) return 0;
 
-        foreach (var clip in primaryTrack.Clips.OrderBy(c => c.TimelineStart).ToList())
+        foreach (var clip in primaryTrack.Clips.Where(c => c.Kind == ClipKind.Media).OrderBy(c => c.TimelineStart).ToList())
         {
             var asset = doc.MediaPool.FirstOrDefault(m => m.Id == clip.MediaAssetId);
             if (asset != null && asset.Transcript.Count > 0)
@@ -655,10 +782,35 @@ public class TimelineService
         int count = 0;
         foreach (var track in doc.Tracks.Where(t => t.Type == TrackType.Video && !t.IsLocked))
         {
-            foreach (var clip in track.Clips)
+            var mediaClips = track.Clips.Where(c => c.Kind == ClipKind.Media).OrderBy(c => c.TimelineStart).ToList();
+            for (int i = 0; i < mediaClips.Count; i++)
             {
+                var clip = mediaClips[i];
                 clip.InTransition = new TransitionSpec { Type = transitionType, Duration = duration };
                 clip.OutTransition = new TransitionSpec { Type = transitionType, Duration = duration };
+
+                double cutTime = clip.TimelineStart + clip.Duration;
+                bool hasExistingBlock = track.Clips.Any(c =>
+                    c.Kind == ClipKind.Transition &&
+                    Math.Abs((c.TimelineStart + c.Duration * 0.5) - cutTime) < 0.35);
+
+                if (!hasExistingBlock && (i < mediaClips.Count - 1 || i == 0))
+                {
+                    double blockStart = i < mediaClips.Count - 1
+                        ? Math.Max(0, cutTime - duration * 0.5)
+                        : clip.TimelineStart;
+                    track.Clips.Add(new TimelineClip
+                    {
+                        Kind = ClipKind.Transition,
+                        TransitionEffectType = transitionType,
+                        Label = FormatTransitionTitle(transitionType),
+                        TimelineStart = Math.Round(blockStart, 3),
+                        Duration = Math.Round(duration, 3),
+                        SourceIn = 0,
+                        SourceOut = Math.Round(duration, 3),
+                        InTransition = new TransitionSpec { Type = transitionType, Duration = duration }
+                    });
+                }
                 count++;
             }
         }
@@ -670,7 +822,7 @@ public class TimelineService
         int count = 0;
         foreach (var track in doc.Tracks.Where(t => !t.IsLocked && (t.TrackCode.Equals(trackCode, StringComparison.OrdinalIgnoreCase) || t.Type == TrackType.Audio || t.Type == TrackType.Video)))
         {
-            foreach (var clip in track.Clips)
+            foreach (var clip in track.Clips.Where(c => c.Kind != ClipKind.Transition))
             {
                 clip.GainDb = Math.Clamp(targetGainDb, -24f, 12f);
                 count++;
@@ -679,12 +831,12 @@ public class TimelineService
         return count;
     }
 
-    public TimelineClip AddTextOverlay(ProjectDocument doc, string text, double start, double duration, string stylePreset = "BroadcastBox")
+    public TimelineClip AddTextOverlay(ProjectDocument doc, string text, double start, double duration, string stylePreset = "CleanFloating")
     {
         var textTrack = doc.Tracks.FirstOrDefault(t => t.Type == TrackType.Text);
         if (textTrack == null)
         {
-            textTrack = new TimelineTrack { TrackCode = "C1", Name = "Subtitles", Type = TrackType.Text };
+            textTrack = new TimelineTrack { TrackCode = "C1", Name = "Titles & Captions", Type = TrackType.Text };
             doc.Tracks.Insert(0, textTrack);
         }
 
@@ -693,11 +845,12 @@ public class TimelineService
             "YellowCinema" => "#FFF59E0B",
             "CleanLowerThird" => "#FFE6E6EB",
             "HighContrastStroke" => "#FFFFFFFF",
-            _ => "#FFE6E6EB"
+            _ => "#FFFFFFFF"
         };
 
         var clip = new TimelineClip
         {
+            Kind = ClipKind.Text,
             Label = text.Length > 28 ? text[..28] + "..." : text,
             TimelineStart = Math.Max(0, Math.Round(start, 3)),
             Duration = Math.Max(0.3, Math.Round(duration, 3)),
@@ -708,7 +861,10 @@ public class TimelineService
                 Text = text,
                 StylePreset = stylePreset,
                 TextColorHex = textColor,
-                FontSize = 46f,
+                BackgroundBoxEnabled = false, // 100% Transparent Background by default!
+                FontSize = 48f,
+                LetterSpacing = 0f,
+                LineHeight = 1.2f,
                 Bold = true
             }
         };
@@ -717,12 +873,12 @@ public class TimelineService
         return clip;
     }
 
-    public void PopulateSubtitleTrackFromTranscript(ProjectDocument doc, List<TranscriptSegment> segments, double timelineOffset = 0, string stylePreset = "BroadcastBox")
+    public void PopulateSubtitleTrackFromTranscript(ProjectDocument doc, List<TranscriptSegment> segments, double timelineOffset = 0, string stylePreset = "CleanFloating")
     {
         var textTrack = doc.Tracks.FirstOrDefault(t => t.Type == TrackType.Text);
         if (textTrack == null)
         {
-            textTrack = new TimelineTrack { TrackCode = "C1", Name = "Subtitles", Type = TrackType.Text };
+            textTrack = new TimelineTrack { TrackCode = "C1", Name = "Titles & Captions", Type = TrackType.Text };
             doc.Tracks.Insert(0, textTrack);
         }
 
@@ -733,5 +889,95 @@ public class TimelineService
             double dur = Math.Max(0.25, seg.EndTime - seg.StartTime);
             AddTextOverlay(doc, seg.Text.Trim(), start, dur, stylePreset);
         }
+    }
+
+    /// <summary>
+    /// Inserts an Adjustment Layer clip onto the top video overlay track (e.g., V2) at the specified time.
+    /// </summary>
+    public TimelineClip AddAdjustmentLayerClip(ProjectDocument doc, double startTime, double duration = 5.0, string label = "Adjustment Layer")
+    {
+        var overlayTrack = doc.Tracks.FirstOrDefault(t => t.Type == TrackType.Video && t.TrackCode != "V1")
+                           ?? doc.Tracks.FirstOrDefault(t => t.Type == TrackType.Video);
+
+        if (overlayTrack == null)
+        {
+            overlayTrack = new TimelineTrack { TrackCode = "V2", Name = "Video 2 (Overlay)", Type = TrackType.Video, Index = 1 };
+            doc.Tracks.Insert(0, overlayTrack);
+        }
+
+        double dur = Math.Max(0.5, Math.Round(duration, 3));
+        var adjClip = new TimelineClip
+        {
+            Kind = ClipKind.AdjustmentLayer,
+            Label = label,
+            TimelineStart = Math.Max(0, Math.Round(startTime, 3)),
+            Duration = dur,
+            SourceIn = 0,
+            SourceOut = dur,
+            Opacity = 1.0f,
+            Scale = 1.0f
+        };
+
+        overlayTrack.Clips.Add(adjClip);
+        return adjClip;
+    }
+
+    /// <summary>
+    /// Nests the specified clip (or all clips within its time window across unlocked video tracks) into a Compound Clip.
+    /// </summary>
+    public TimelineClip? CreateCompoundClip(ProjectDocument doc, Guid primaryClipId, string label = "Compound Clip")
+    {
+        TimelineTrack? ownerTrack = null;
+        TimelineClip? primaryClip = null;
+
+        foreach (var track in doc.Tracks)
+        {
+            var found = track.Clips.FirstOrDefault(c => c.Id == primaryClipId);
+            if (found != null)
+            {
+                ownerTrack = track;
+                primaryClip = found;
+                break;
+            }
+        }
+
+        if (ownerTrack == null || primaryClip == null)
+            return null;
+
+        double start = primaryClip.TimelineStart;
+        double dur = Math.Max(0.2, primaryClip.Duration);
+
+        var nestedTrack = new TimelineTrack
+        {
+            Id = Guid.NewGuid(),
+            TrackCode = ownerTrack.TrackCode,
+            Name = ownerTrack.Name,
+            Type = ownerTrack.Type,
+            Index = 0,
+            IsVisible = true
+        };
+
+        var shiftedChild = primaryClip.Clone();
+        shiftedChild.TimelineStart = 0.0;
+        nestedTrack.Clips.Add(shiftedChild);
+
+        ownerTrack.Clips.Remove(primaryClip);
+
+        var compound = new TimelineClip
+        {
+            Kind = ClipKind.CompoundClip,
+            MediaAssetId = primaryClip.MediaAssetId,
+            Label = string.IsNullOrWhiteSpace(label) ? $"Compound [{primaryClip.Label}]" : label,
+            TimelineStart = start,
+            Duration = dur,
+            SourceIn = 0.0,
+            SourceOut = dur,
+            Opacity = 1.0f,
+            Scale = 1.0f,
+            NestedTracks = new List<TimelineTrack> { nestedTrack }
+        };
+
+        ownerTrack.Clips.Add(compound);
+        return compound;
     }
 }

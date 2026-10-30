@@ -24,6 +24,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public MultiTrackAudioPlayer AudioPlayer { get; } = new();
     public HybridAiRouter AiRouter { get; }
     public VideoExporter VideoExporter { get; }
+    public AutoSaveService AutoSave { get; }
 
     public MediaBinViewModel MediaBin { get; }
     public TimelineViewModel Timeline { get; }
@@ -32,15 +33,37 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public SettingsViewModel Settings { get; }
 
     private readonly DispatcherTimer _playbackTimer;
-    private readonly DispatcherTimer _autoSaveTimer;
     private DateTime _lastTickUtc;
+    private Action? _pendingUnsavedProceedAction;
 
     public event Action? RequestCanvasRefresh;
     public event Action? RequestTimelineRefresh;
+    public event Action<double>? RequestPlaybackTick;
     public event Action<float, float>? RequestVuMeterRefresh;
 
     [ObservableProperty]
     private string _projectName = "Vortex_Master_Sequence";
+
+    [ObservableProperty]
+    private string? _currentProjectFilePath;
+
+    [ObservableProperty]
+    private bool _isProjectModified;
+
+    public string WindowTitle =>
+        $"Vortex Cut Studio  —  {ProjectName}{(IsProjectModified ? " *" : "")}" +
+        (!string.IsNullOrWhiteSpace(CurrentProjectFilePath) ? $"  ({Path.GetFileName(CurrentProjectFilePath)})" : "");
+
+    [ObservableProperty]
+    private int _missingMediaCount;
+
+    public bool HasMissingMedia => MissingMediaCount > 0;
+
+    [ObservableProperty]
+    private bool _isUnsavedChangesModalOpen;
+
+    [ObservableProperty]
+    private string _unsavedChangesMessage = "You have unsaved changes in the current project. Save before continuing?";
 
     [ObservableProperty]
     private string _statusMessage = "Vortex Cut Studio Ready  •  Import Media (Ctrl+I) or Drag & Drop Video/Audio";
@@ -223,6 +246,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             CanRedo = UndoRedo.CanRedo;
             UndoTooltip = UndoRedo.UndoTooltip;
             RedoTooltip = UndoRedo.RedoTooltip;
+            IsProjectModified = UndoRedo.IsProjectModified;
+            OnPropertyChanged(nameof(WindowTitle));
         };
 
         Timeline = new TimelineViewModel(
@@ -242,7 +267,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     TimelineService.ApplyTransitionToAllClips(Document, transType, dur);
                 }, RestoreProjectDocument);
                 NotifyTimelineAndCanvasChanged();
-                StatusMessage = $"Applied '{transType}' ({dur:0.00}s) transition across video cuts.";
+                StatusMessage = $"Applied '{transType}' ({dur:0.00}s) transition blocks across video cuts.";
             },
             () => Timeline.PlayheadTime,
             newTime =>
@@ -250,7 +275,20 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 Timeline.PlayheadTime = Math.Max(0, newTime);
                 NotifyTimelineAndCanvasChanged();
             },
-            msg => StatusMessage = msg);
+            msg => StatusMessage = msg,
+            UndoRedo,
+            (transType, dur) =>
+            {
+                var v1 = Document.Tracks.FirstOrDefault(t => t.Type == TrackType.Video) ?? Document.Tracks.FirstOrDefault();
+                if (v1 == null) return;
+                var block = TimelineService.AddStandaloneTransitionBlock(Document, transType, Timeline.PlayheadTime, dur, v1);
+                UndoRedo.ExecuteCommand(new AddClipCommand(v1, block));
+                Timeline.SelectedClip = block;
+                Inspector?.BindClip(block);
+                NotifyTimelineAndCanvasChanged();
+                StatusMessage = $"Inserted standalone {TimelineService.FormatTransitionTitle(transType)} transition block ({dur:0.1}s).";
+            },
+            () => { if (!Timeline.IsPlaying) TogglePlayPause(); });
 
         MediaBin = new MediaBinViewModel(
             Document,
@@ -294,13 +332,18 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         };
         _playbackTimer.Tick += OnPlaybackTick;
 
-        // 3-Minute Crash-Recovery Autosave
-        _autoSaveTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromMinutes(3)
-        };
-        _autoSaveTimer.Tick += async (_, _) => await AutoSaveProjectAsync();
-        _autoSaveTimer.Start();
+        // 3-Minute Crash-Recovery Autosave Service (%AppData%/VortexCutStudio/Autosave)
+        AutoSave = new AutoSaveService(
+            () => Document,
+            UndoRedo,
+            onAutoSaveNotified: path =>
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    StatusMessage = $"Auto-saved recovery backup ({Path.GetFileName(path)}).";
+                });
+            },
+            interval: TimeSpan.FromMinutes(3));
     }
 
     /// <summary>
@@ -317,7 +360,23 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     partial void OnProjectNameChanged(string value)
     {
         Document.ProjectName = value;
+        OnPropertyChanged(nameof(WindowTitle));
         RequestCanvasRefresh?.Invoke();
+    }
+
+    partial void OnCurrentProjectFilePathChanged(string? value)
+    {
+        OnPropertyChanged(nameof(WindowTitle));
+    }
+
+    partial void OnIsProjectModifiedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(WindowTitle));
+    }
+
+    partial void OnMissingMediaCountChanged(int value)
+    {
+        OnPropertyChanged(nameof(HasMissingMedia));
     }
 
     partial void OnShowSafeMarginsChanged(bool value)
@@ -373,15 +432,28 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (code.StartsWith("Trans:"))
             {
                 string tType = code["Trans:".Length..];
-                if (tType == "None")
+                if (clip.IsTransitionClip)
                 {
-                    clip.InTransition = null;
-                    clip.OutTransition = null;
+                    clip.TransitionType = tType;
+                    clip.Label = $"{tType} Transition";
+                    if (clip.InTransition != null) clip.InTransition.Type = tType;
                 }
                 else
                 {
-                    clip.InTransition = new TransitionSpec { Type = tType, Duration = 0.5 };
-                    clip.OutTransition = new TransitionSpec { Type = tType, Duration = 0.5 };
+                    if (tType == "None")
+                    {
+                        clip.InTransition = null;
+                        clip.OutTransition = null;
+                        clip.FadeInDuration = 0;
+                        clip.FadeOutDuration = 0;
+                    }
+                    else
+                    {
+                        clip.InTransition = new TransitionSpec { Type = tType, Duration = 0.5 };
+                        clip.OutTransition = new TransitionSpec { Type = tType, Duration = 0.5 };
+                        clip.FadeInDuration = 0.5;
+                        clip.FadeOutDuration = 0.5;
+                    }
                 }
             }
             else if (code.StartsWith("Color:"))
@@ -474,8 +546,24 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             case "ClearKeyframes": Inspector.ClearAllKeyframes(); break;
             case "ResetAllEffectsAndColor": Inspector.ResetTransforms(); break;
             case "RevealInExplorer": Timeline.RevealSelectedClipInExplorer(); break;
+            case "AddStandaloneTransitionBlock":
+                Timeline.AddStandaloneTransitionBlockAtSelectionOrPlayhead();
+                Inspector.BindClip(Timeline.SelectedClip);
+                break;
+            case "AddStandaloneTransitionBlockHere":
+                Timeline.AddStandaloneTransitionBlockAtTime(clickTime);
+                Inspector.BindClip(Timeline.SelectedClip);
+                break;
             case "InsertTextHere":
                 Timeline.InsertTextClipAtTime(clickTime);
+                Inspector.BindClip(Timeline.SelectedClip);
+                break;
+            case "AddAdjustmentLayer":
+                Timeline.AddAdjustmentLayer();
+                Inspector.BindClip(Timeline.SelectedClip);
+                break;
+            case "CreateCompoundClip":
+                Timeline.CreateCompoundClip();
                 Inspector.BindClip(Timeline.SelectedClip);
                 break;
             case "AddVideoTrack": Timeline.AddVideoTrack(); break;
@@ -543,7 +631,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public void FocusAiAssistant()
     {
         RightPanelTabIndex = 1;
-        StatusMessage = "🤖 AI Edit Assistant (Ctrl+K) ready — Type an edit command or click a Quick AI action.";
+        StatusMessage = "Smart Edit Assistant (Ctrl+K) ready — Type an edit command or click a Quick action.";
     }
 
     [RelayCommand]
@@ -767,7 +855,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
             SourceMonitorTime = nextSrc;
             UpdateSourceMonitorReadouts();
-            RequestCanvasRefresh?.Invoke();
+            RequestPlaybackTick?.Invoke(SourceMonitorTime);
             return;
         }
 
@@ -784,8 +872,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Inspector.SyncPlayheadValues();
         var (lDb, rDb) = AudioPlayer.SampleRealtimeVuLevels(Document, Timeline.PlayheadTime);
         RequestVuMeterRefresh?.Invoke(lDb, rDb);
-        RequestTimelineRefresh?.Invoke();
-        RequestCanvasRefresh?.Invoke();
+        RequestPlaybackTick?.Invoke(nextTime);
     }
 
     [RelayCommand]
@@ -1016,34 +1103,120 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
+    public void RequestActionWithUnsavedCheck(string actionDescription, Action onProceed)
+    {
+        if (!IsProjectModified)
+        {
+            onProceed();
+            return;
+        }
+
+        StopPlayback();
+        _pendingUnsavedProceedAction = onProceed;
+        UnsavedChangesMessage = $"'{ProjectName}' has unsaved edits. Save changes before {actionDescription}?";
+        IsUnsavedChangesModalOpen = true;
+    }
+
+    public void ExecutePendingUnsavedProceedAction()
+    {
+        IsUnsavedChangesModalOpen = false;
+        var act = _pendingUnsavedProceedAction;
+        _pendingUnsavedProceedAction = null;
+        act?.Invoke();
+    }
+
+    [RelayCommand]
+    public void CancelUnsavedChangesModal()
+    {
+        IsUnsavedChangesModalOpen = false;
+        _pendingUnsavedProceedAction = null;
+    }
+
+    public void CreateNewProject()
+    {
+        StopPlayback();
+        var fresh = CreateInitialStarterProject();
+        CurrentProjectFilePath = null;
+        MissingMediaCount = 0;
+        RestoreProjectDocument(fresh);
+        UndoRedo.Clear();
+        UndoRedo.MarkSaved();
+        IsProjectModified = false;
+        StatusMessage = "Created new empty project sequence (Ctrl+N).";
+    }
+
     public async Task SaveProjectToFileAsync(string filePath)
     {
         await ProjectSerializer.SaveAsync(Document, filePath);
-        StatusMessage = $"Saved Vortex Cut Studio project to {Path.GetFileName(filePath)}";
+        CurrentProjectFilePath = filePath;
+        ProjectName = Path.GetFileNameWithoutExtension(filePath);
+        UndoRedo.MarkSaved();
+        IsProjectModified = false;
+        StatusMessage = $"Saved project '{ProjectName}' to {Path.GetFileName(filePath)} (Ctrl+S).";
     }
 
     public async Task LoadProjectFromFileAsync(string filePath)
     {
         var loaded = await ProjectSerializer.LoadAsync(filePath);
+        CurrentProjectFilePath = filePath;
+        var missing = ProjectSerializer.FindMissingMediaAssets(loaded);
+        MissingMediaCount = missing.Count;
         RestoreProjectDocument(loaded);
         UndoRedo.Clear();
-        StatusMessage = $"Opened sequence '{loaded.ProjectName}' from {Path.GetFileName(filePath)}";
+        UndoRedo.MarkSaved();
+        IsProjectModified = false;
+
+        if (missing.Count > 0)
+        {
+            StatusMessage = $"Opened '{loaded.ProjectName}' — Warning: {missing.Count} offline media file(s). Use File > Relink Missing Media.";
+        }
+        else
+        {
+            StatusMessage = $"Opened project '{loaded.ProjectName}' from {Path.GetFileName(filePath)}.";
+        }
     }
 
-    private async Task AutoSaveProjectAsync()
+    public async Task ArchiveProjectToFolderAsync(string archiveFolderPath)
     {
-        try
+        string archivedVcsproj = await ProjectSerializer.ArchiveProjectAsync(Document, archiveFolderPath);
+        StatusMessage = $"Archived project & collected all media + LUTs into: {archiveFolderPath} ({Path.GetFileName(archivedVcsproj)}).";
+    }
+
+    public int RelinkMissingMediaFromFolder(string searchFolderPath)
+    {
+        int relinked = ProjectSerializer.TryAutoRelinkMissingMedia(Document, new[] { searchFolderPath });
+        var remaining = ProjectSerializer.FindMissingMediaAssets(Document);
+        MissingMediaCount = remaining.Count;
+        MediaBin.SyncFromDocument(Document);
+        NotifyTimelineAndCanvasChanged();
+        if (relinked > 0)
+            UndoRedo.MarkModified();
+
+        StatusMessage = relinked > 0
+            ? $"Relinked {relinked} media file(s) from '{searchFolderPath}'. Remaining offline: {remaining.Count}."
+            : $"No matching media files found in '{searchFolderPath}'. Remaining offline: {remaining.Count}.";
+        return relinked;
+    }
+
+    public async Task ExportInterchangeAsync(string outputPath)
+    {
+        string ext = Path.GetExtension(outputPath).ToLowerInvariant();
+        if (ext == ".edl")
         {
-            string autoSavePath = Path.Combine(AiProviderConfig.GetAppDataFolder(), "autosave_recovery.vortex");
-            await ProjectSerializer.SaveAsync(Document, autoSavePath);
+            await ProjectInterchangeExporter.ExportCmx3600EdlAsync(Document, outputPath);
+            StatusMessage = $"Exported SMPTE CMX 3600 EDL for DaVinci Resolve / Premiere: {Path.GetFileName(outputPath)}";
         }
-        catch { }
+        else
+        {
+            await ProjectInterchangeExporter.ExportFcp7XmlAsync(Document, outputPath);
+            StatusMessage = $"Exported FCP7 XML (xmeml v5) for DaVinci Resolve / Premiere: {Path.GetFileName(outputPath)}";
+        }
     }
 
     public void Dispose()
     {
         _playbackTimer.Stop();
-        _autoSaveTimer.Stop();
+        AutoSave.Dispose();
         AudioPlayer.Dispose();
         Compositor.Dispose();
         AiRouter.Dispose();

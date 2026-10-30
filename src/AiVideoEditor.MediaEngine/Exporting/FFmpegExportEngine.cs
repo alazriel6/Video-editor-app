@@ -1,5 +1,8 @@
+using System.Buffers;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading.Channels;
 using AiVideoEditor.Core.Interfaces;
 using AiVideoEditor.Core.Models;
 using AiVideoEditor.MediaEngine.Audio;
@@ -13,8 +16,10 @@ using SkiaSharp;
 namespace AiVideoEditor.MediaEngine.Exporting;
 
 /// <summary>
-/// Production Hardware-Accelerated FFmpeg &amp; Native Export Engine (Section 4).
-/// Supports NVENC, Intel QSV, AMD AMF, libx264, libx265, Apple ProRes 422, and Audio-Only WAV/MP3.
+/// Production Hardware-Accelerated FFmpeg &amp; Native Export Engine.
+/// Supports NVIDIA NVENC, AMD AMF, Intel QSV, libx264, libx265, Apple ProRes 422, and Audio-Only WAV/MP3.
+/// Implements asynchronous Producer-Consumer Channel piping with ArrayPool<byte> zero-allocation frame buffers
+/// and guaranteed single-pass 48kHz stereo AAC audio muxing.
 /// </summary>
 public sealed class FFmpegExportEngine : IVideoRenderEngine
 {
@@ -22,6 +27,7 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
     private readonly MultiTrackAudioPlayer _audioPlayer;
     private static string? _cachedFfmpegExe;
     private static List<string>? _cachedSupportedEncoders;
+    private static readonly ConcurrentDictionary<string, bool> _hardwareEncoderValidationCache = new(StringComparer.OrdinalIgnoreCase);
 
     public FFmpegExportEngine(CompositorEngine compositor, MultiTrackAudioPlayer audioPlayer)
     {
@@ -31,7 +37,7 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
 
     public static string? ResolveFfmpegExecutable()
     {
-        if (!string.IsNullOrEmpty(_cachedFfmpegExe) && File.Exists(_cachedFfmpegExe))
+        if (!string.IsNullOrEmpty(_cachedFfmpegExe) && (File.Exists(_cachedFfmpegExe) || _cachedFfmpegExe == "ffmpeg"))
             return _cachedFfmpegExe;
 
         string baseDir = AppContext.BaseDirectory;
@@ -136,7 +142,7 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
                     string output = proc.StandardOutput.ReadToEnd();
                     proc.WaitForExit(3000);
 
-                    string[] checkCodes = { "h264_nvenc", "hevc_nvenc", "h264_qsv", "h264_amf", "libx264", "libx265", "prores_ks" };
+                    string[] checkCodes = { "h264_nvenc", "hevc_nvenc", "h264_amf", "h264_qsv", "libx264", "libx265", "prores_ks" };
                     foreach (var code in checkCodes)
                     {
                         if (output.Contains(code, StringComparison.OrdinalIgnoreCase))
@@ -149,11 +155,69 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
 
         if (list.Count == 0)
         {
-            list.AddRange(new[] { "libx264", "h264_nvenc", "h264_qsv", "h264_amf", "libx265", "prores_ks" });
+            list.AddRange(new[] { "h264_nvenc", "h264_amf", "h264_qsv", "libx264", "libx265", "prores_ks" });
         }
 
         _cachedSupportedEncoders = list;
         return list;
+    }
+
+    /// <summary>
+    /// Tests whether a specific GPU hardware encoder can initialize on the user's graphics card.
+    /// Results are cached in memory so each encoder is probed at most once per session.
+    /// </summary>
+    private static bool CanInitializeHardwareEncoder(string ffmpegBin, string encoderName)
+    {
+        if (encoderName is "libx264" or "libx265" or "prores_ks")
+            return true;
+
+        if (_hardwareEncoderValidationCache.TryGetValue(encoderName, out bool isWorking))
+            return isWorking;
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpegBin,
+                Arguments = $"-hide_banner -loglevel error -f lavfi -i color=c=black:s=256x256:d=0.04 -frames:v 1 -c:v {encoderName} -f null -",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc != null && proc.WaitForExit(3000) && proc.ExitCode == 0)
+            {
+                _hardwareEncoderValidationCache[encoderName] = true;
+                return true;
+            }
+        }
+        catch { }
+
+        _hardwareEncoderValidationCache[encoderName] = false;
+        return false;
+    }
+
+    /// <summary>
+    /// Selects the fastest working GPU encoder (NVENC -> AMF -> QSV -> Multi-core libx264).
+    /// </summary>
+    private static string SelectOptimalHardwareEncoder(string ffmpegBin, string? userRequestedRaw)
+    {
+        string normalized = NormalizeEncoderId(userRequestedRaw);
+
+        // If user explicitly chose a working hardware encoder or specialized codec (HEVC / ProRes), verify it first
+        if (normalized != "auto" && CanInitializeHardwareEncoder(ffmpegBin, normalized))
+            return normalized;
+
+        // Auto-detect fastest active GPU encoder in priority order: NVIDIA NVENC -> AMD AMF -> Intel QSV -> CPU libx264
+        string[] gpuPriorityOrder = { "h264_nvenc", "h264_amf", "h264_qsv" };
+        foreach (var candidate in gpuPriorityOrder)
+        {
+            if (CanInitializeHardwareEncoder(ffmpegBin, candidate))
+                return candidate;
+        }
+
+        return "libx264";
     }
 
     public async Task ExportProjectAsync(
@@ -188,19 +252,26 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
             int width = settings.Width > 0 ? settings.Width : document.Width;
             int height = settings.Height > 0 ? settings.Height : document.Height;
 
-            // Ensure even dimensions for YUV420p hardware encoders
+            // Ensure even dimensions for YUV420p/NV12 hardware encoders
             if (width % 2 != 0) width++;
             if (height % 2 != 0) height++;
 
             var sw = Stopwatch.StartNew();
-            progress?.Report((2.0, "Stage 1/2: Mixing multi-track audio & DSP...", TimeSpan.FromSeconds(4)));
+            progress?.Report((2.0, "Stage 1/2: Mixing 48kHz multi-track audio & constant-power crossfades...", TimeSpan.FromSeconds(3)));
 
             string tempWav = Path.Combine(Path.GetTempPath(), $"vortex_master_{Guid.NewGuid():N}.wav");
             string tempVideoOnly = Path.Combine(Path.GetTempPath(), $"vortex_video_{Guid.NewGuid():N}.mp4");
 
+            bool prevScopeUpdates = _compositor.EnableScopeUpdates;
+            bool prevExporting = _compositor.IsExporting;
+            _compositor.EnableScopeUpdates = false;
+            _compositor.IsExporting = true;
+
             try
             {
-                await _audioPlayer.MixdownToWavAsync(document, tempWav, cancellationToken);
+                // Pre-render timeline audio for the exact [startSec, renderDuration] window
+                await _audioPlayer.MixdownToWavAsync(document, tempWav, cancellationToken, startSec, renderDuration);
+                bool hasValidAudioWav = File.Exists(tempWav) && new FileInfo(tempWav).Length > 44;
 
                 // Audio-Only Export Preset (.wav or .mp3)
                 bool isAudioOnly = settings.AudioOnly ||
@@ -212,9 +283,9 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
                     string? ffmpegExe = ResolveFfmpegExecutable();
                     if (settings.OutputPath.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(ffmpegExe))
                     {
-                        RunFfmpegSimple($"-y -ss {startSec:0.###} -t {renderDuration:0.###} -i \"{tempWav}\" -c:a libmp3lame -b:a 320k \"{settings.OutputPath}\"");
+                        await RunFfmpegAsync(ffmpegExe, $"-y -i \"{tempWav}\" -c:a libmp3lame -b:a 320k -ar 48000 \"{settings.OutputPath}\"", cancellationToken);
                     }
-                    if (!File.Exists(settings.OutputPath))
+                    if (!File.Exists(settings.OutputPath) && hasValidAudioWav)
                     {
                         File.Copy(tempWav, settings.OutputPath, overwrite: true);
                     }
@@ -222,29 +293,31 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
                     return;
                 }
 
-                string requestedEncoder = NormalizeEncoderId(settings.HardwareEncoder);
                 bool encodedSuccess = false;
-
-                // Stage 2A: Primary Hardware/CPU FFmpeg RawVideo Pipe
                 string? ffmpegBin = ResolveFfmpegExecutable();
+
+                // Stage 2A: High-Speed Asynchronous Channel Pipe to Hardware/CPU FFmpeg
                 if (!string.IsNullOrEmpty(ffmpegBin))
                 {
-                    encodedSuccess = TryEncodeViaFfmpegRawPipe(
-                        ffmpegBin, document, settings, tempWav,
-                        startSec, width, height, fps, totalFrames,
-                        requestedEncoder, sw, progress, cancellationToken);
+                    string selectedEncoder = SelectOptimalHardwareEncoder(ffmpegBin, settings.HardwareEncoder);
 
-                    // If GPU hardware encoder failed on this machine, fall back automatically to libx264 pipe
-                    if (!encodedSuccess && requestedEncoder != "libx264")
+                    encodedSuccess = await TryEncodeViaFfmpegRawPipeAsync(
+                        ffmpegBin, document, settings, tempWav, hasValidAudioWav,
+                        startSec, width, height, fps, totalFrames,
+                        selectedEncoder, sw, progress, cancellationToken);
+
+                    // If selected GPU encoder failed mid-stream, automatically retry with multi-core libx264 pipe
+                    if (!encodedSuccess && selectedEncoder != "libx264")
                     {
-                        encodedSuccess = TryEncodeViaFfmpegRawPipe(
-                            ffmpegBin, document, settings, tempWav,
+                        _hardwareEncoderValidationCache[selectedEncoder] = false;
+                        encodedSuccess = await TryEncodeViaFfmpegRawPipeAsync(
+                            ffmpegBin, document, settings, tempWav, hasValidAudioWav,
                             startSec, width, height, fps, totalFrames,
                             "libx264", sw, progress, cancellationToken);
                     }
                 }
 
-                // Stage 2B: Fallback to FFMediaToolkit or OpenCvSharp VideoWriter + Audio Mux
+                // Stage 2B: Fallback to FFMediaToolkit or OpenCvSharp VideoWriter + Mandatory Audio Muxing
                 if (!encodedSuccess)
                 {
                     bool videoCreated = false;
@@ -266,30 +339,37 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
 
                     if (videoCreated && File.Exists(tempVideoOnly) && new FileInfo(tempVideoOnly).Length > 0)
                     {
-                        progress?.Report((96.0, "Muxing video & master audio stream...", TimeSpan.FromSeconds(1)));
-                        if (!string.IsNullOrEmpty(ffmpegBin) &&
-                            RunFfmpegSimple($"-y -i \"{tempVideoOnly}\" -ss {startSec:0.###} -t {renderDuration:0.###} -i \"{tempWav}\" -c:v copy -c:a aac -b:a 256k -shortest \"{settings.OutputPath}\"") &&
-                            File.Exists(settings.OutputPath))
+                        progress?.Report((96.0, "Muxing video & 48kHz master audio stream...", TimeSpan.FromSeconds(1)));
+
+                        if (!string.IsNullOrEmpty(ffmpegBin) && hasValidAudioWav)
                         {
-                            encodedSuccess = true;
+                            string muxArgs =
+                                $"-y -i \"{tempVideoOnly}\" -i \"{tempWav}\" " +
+                                $"-map 0:v:0 -map 1:a:0? -c:v copy -c:a aac -b:a 256k -ar 48000 -movflags +faststart \"{settings.OutputPath}\"";
+
+                            encodedSuccess = await RunFfmpegAsync(ffmpegBin, muxArgs, cancellationToken) &&
+                                             File.Exists(settings.OutputPath) &&
+                                             new FileInfo(settings.OutputPath).Length > 512;
                         }
-                        else
+                        else if (string.IsNullOrEmpty(ffmpegBin))
                         {
-                            File.Copy(tempVideoOnly, settings.OutputPath, overwrite: true);
-                            encodedSuccess = true;
+                            throw new InvalidOperationException(
+                                "FFmpeg executable is required to mux master audio into the exported container. Please ensure ffmpeg.exe is installed.");
                         }
                     }
                 }
 
                 if (!encodedSuccess || !File.Exists(settings.OutputPath))
                 {
-                    throw new InvalidOperationException("Video export pipeline could not initialize an encoder for the target path.");
+                    throw new InvalidOperationException("Video export pipeline could not finalize the encoded output container.");
                 }
 
                 progress?.Report((100.0, $"Export Complete ({totalFrames} frames) -> {Path.GetFileName(settings.OutputPath)}", TimeSpan.Zero));
             }
             finally
             {
+                _compositor.EnableScopeUpdates = prevScopeUpdates;
+                _compositor.IsExporting = prevExporting;
                 try { if (File.Exists(tempWav)) File.Delete(tempWav); } catch { }
                 try { if (File.Exists(tempVideoOnly)) File.Delete(tempVideoOnly); } catch { }
             }
@@ -298,21 +378,24 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
 
     private static string NormalizeEncoderId(string? raw)
     {
-        if (string.IsNullOrWhiteSpace(raw)) return "libx264";
+        if (string.IsNullOrWhiteSpace(raw)) return "auto";
+        if (raw.Contains("auto", StringComparison.OrdinalIgnoreCase)) return "auto";
         if (raw.Contains("h264_nvenc", StringComparison.OrdinalIgnoreCase)) return "h264_nvenc";
         if (raw.Contains("hevc_nvenc", StringComparison.OrdinalIgnoreCase)) return "hevc_nvenc";
         if (raw.Contains("h264_qsv", StringComparison.OrdinalIgnoreCase)) return "h264_qsv";
         if (raw.Contains("h264_amf", StringComparison.OrdinalIgnoreCase)) return "h264_amf";
         if (raw.Contains("libx265", StringComparison.OrdinalIgnoreCase)) return "libx265";
         if (raw.Contains("prores", StringComparison.OrdinalIgnoreCase)) return "prores_ks";
-        return "libx264";
+        if (raw.Contains("libx264", StringComparison.OrdinalIgnoreCase)) return "libx264";
+        return "auto";
     }
 
-    private bool TryEncodeViaFfmpegRawPipe(
+    private async Task<bool> TryEncodeViaFfmpegRawPipeAsync(
         string ffmpegBin,
         ProjectDocument document,
         ExportSettings settings,
         string audioWavPath,
+        bool hasValidAudioWav,
         double startSec,
         int width,
         int height,
@@ -326,26 +409,35 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
         try
         {
             int bitrateKbps = settings.BitrateKbps > 500 ? settings.BitrateKbps : 16000;
-            double durationSec = totalFrames / fps;
+            int maxrateKbps = (int)(bitrateKbps * 1.5);
+            int bufsizeKbps = bitrateKbps * 2;
 
             string codecFlags = encoder switch
             {
-                "h264_nvenc" or "hevc_nvenc" => $"-c:v {encoder} -preset p4 -b:v {bitrateKbps}k -pix_fmt yuv420p",
-                "h264_qsv" => $"-c:v h264_qsv -b:v {bitrateKbps}k -pix_fmt yuv420p",
-                "h264_amf" => $"-c:v h264_amf -b:v {bitrateKbps}k -pix_fmt yuv420p",
-                "prores_ks" => "-c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le",
-                "libx265" => $"-c:v libx265 -preset fast -crf 20 -b:v {bitrateKbps}k -pix_fmt yuv420p",
-                _ => $"-c:v libx264 -preset fast -crf 18 -b:v {bitrateKbps}k -pix_fmt yuv420p"
+                "h264_nvenc" or "hevc_nvenc" =>
+                    $"-c:v {encoder} -preset p4 -tune hq -rc vbr -cq 19 -b:v {bitrateKbps}k -maxrate {maxrateKbps}k -bufsize {bufsizeKbps}k -pix_fmt yuv420p",
+                "h264_amf" =>
+                    $"-c:v h264_amf -quality balanced -rc vbr_peak -b:v {bitrateKbps}k -maxrate {maxrateKbps}k -pix_fmt yuv420p",
+                "h264_qsv" =>
+                    $"-c:v h264_qsv -preset faster -global_quality 20 -b:v {bitrateKbps}k -pix_fmt nv12",
+                "prores_ks" =>
+                    "-c:v prores_ks -profile:v 2 -pix_fmt yuv422p10le",
+                "libx265" =>
+                    $"-c:v libx265 -preset fast -crf 20 -threads 0 -b:v {bitrateKbps}k -pix_fmt yuv420p",
+                _ =>
+                    $"-c:v libx264 -preset superfast -crf 18 -threads 0 -b:v {bitrateKbps}k -pix_fmt yuv420p"
             };
 
             string audioFlags = encoder == "prores_ks"
-                ? "-c:a pcm_s16le"
-                : "-c:a aac -b:a 320k";
+                ? "-c:a pcm_s16le -ar 48000"
+                : "-c:a aac -b:a 256k -ar 48000";
 
-            string args =
-                $"-y -f rawvideo -pix_fmt bgra -s {width}x{height} -r {fps:0.###} -i pipe:0 " +
-                $"-ss {startSec:0.###} -t {durationSec:0.###} -i \"{audioWavPath}\" " +
-                $"{codecFlags} {audioFlags} -shortest -movflags +faststart \"{settings.OutputPath}\"";
+            string args = hasValidAudioWav
+                ? $"-y -f rawvideo -pix_fmt bgra -s {width}x{height} -r {fps:0.###} -i pipe:0 " +
+                  $"-i \"{audioWavPath}\" -map 0:v:0 -map 1:a:0? " +
+                  $"{codecFlags} {audioFlags} -movflags +faststart \"{settings.OutputPath}\""
+                : $"-y -f rawvideo -pix_fmt bgra -s {width}x{height} -r {fps:0.###} -i pipe:0 " +
+                  $"-map 0:v:0 {codecFlags} -movflags +faststart \"{settings.OutputPath}\"";
 
             var psi = new ProcessStartInfo
             {
@@ -360,49 +452,119 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
             using var proc = Process.Start(psi);
             if (proc == null) return false;
 
-            // Drain stderr asynchronously so FFmpeg never blocks on stderr buffer full
-            _ = Task.Run(async () =>
+            // Drain stderr asynchronously into a 50-line ring buffer so FFmpeg never blocks on OS pipe buffers
+            var stderrRing = new Queue<string>(50);
+            var stderrDrainTask = Task.Run(async () =>
             {
                 try
                 {
-                    while (!proc.StandardError.EndOfStream)
+                    using var errReader = proc.StandardError;
+                    while (await errReader.ReadLineAsync().ConfigureAwait(false) is { } line)
                     {
-                        await proc.StandardError.ReadLineAsync();
+                        lock (stderrRing)
+                        {
+                            if (stderrRing.Count >= 50) stderrRing.Dequeue();
+                            stderrRing.Enqueue(line);
+                        }
                     }
                 }
                 catch { }
             });
 
-            using var bitmap = new SKBitmap(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
-            using var canvas = new SKCanvas(bitmap);
-            byte[] frameBuffer = new byte[bitmap.RowBytes * height];
+            // Bounded Producer-Consumer Channel (8 frames capacity) decoupling Skia composition from pipe I/O
+            var frameChannel = Channel.CreateBounded<(byte[] Buffer, int Length)>(new BoundedChannelOptions(8)
+            {
+                SingleWriter = true,
+                SingleReader = true,
+                FullMode = BoundedChannelFullMode.Wait
+            });
+
             var stdin = proc.StandardInput.BaseStream;
 
-            for (int frameIdx = 0; frameIdx < totalFrames; frameIdx++)
+            // Consumer Task: Asynchronous Pipe Writer
+            var consumerTask = Task.Run(async () =>
             {
-                if (cancellationToken.IsCancellationRequested)
+                try
                 {
-                    try { proc.Kill(true); } catch { }
-                    cancellationToken.ThrowIfCancellationRequested();
+                    while (await frameChannel.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        while (frameChannel.Reader.TryRead(out var packet))
+                        {
+                            try
+                            {
+                                if (!proc.HasExited)
+                                {
+                                    await stdin.WriteAsync(packet.Buffer.AsMemory(0, packet.Length), cancellationToken).ConfigureAwait(false);
+                                }
+                            }
+                            finally
+                            {
+                                ArrayPool<byte>.Shared.Return(packet.Buffer);
+                            }
+                        }
+                    }
+                    await stdin.FlushAsync(cancellationToken).ConfigureAwait(false);
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    // Drain any remaining rented buffers back to ArrayPool if FFmpeg exited early
+                    while (frameChannel.Reader.TryRead(out var leftover))
+                    {
+                        ArrayPool<byte>.Shared.Return(leftover.Buffer);
+                    }
+                }
+                finally
+                {
+                    try { stdin.Close(); } catch { }
+                }
+            }, cancellationToken);
 
-                if (proc.HasExited)
-                    return false;
+            // Producer Loop: High-Speed Frame Rendering into Rented ArrayPool Buffers
+            using var bitmap = new SKBitmap(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
+            using var canvas = new SKCanvas(bitmap);
+            int frameByteLength = bitmap.RowBytes * height;
 
-                double currentTime = startSec + (frameIdx / fps);
-                _compositor.RenderCompositeFrame(canvas, document, currentTime, width, height);
+            try
+            {
+                for (int frameIdx = 0; frameIdx < totalFrames; frameIdx++)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        frameChannel.Writer.TryComplete();
+                        try { proc.Kill(entireProcessTree: true); } catch { }
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
 
-                Marshal.Copy(bitmap.GetPixels(), frameBuffer, 0, frameBuffer.Length);
-                stdin.Write(frameBuffer, 0, frameBuffer.Length);
+                    if (proc.HasExited)
+                        break;
 
-                ReportFrameTelemetry(frameIdx + 1, totalFrames, sw.Elapsed, progress, encoder);
+                    double currentTime = startSec + (frameIdx / fps);
+                    _compositor.RenderCompositeFrame(canvas, document, currentTime, width, height);
+
+                    byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(frameByteLength);
+                    Marshal.Copy(bitmap.GetPixels(), rentedBuffer, 0, frameByteLength);
+
+                    await frameChannel.Writer.WriteAsync((rentedBuffer, frameByteLength), cancellationToken).ConfigureAwait(false);
+
+                    ReportFrameTelemetry(frameIdx + 1, totalFrames, sw.Elapsed, progress, encoder);
+                }
+            }
+            finally
+            {
+                frameChannel.Writer.TryComplete();
             }
 
-            stdin.Flush();
-            stdin.Close();
-            proc.WaitForExit(20000);
+            await consumerTask.ConfigureAwait(false);
+            await proc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            await stderrDrainTask.ConfigureAwait(false);
 
-            return proc.ExitCode == 0 && File.Exists(settings.OutputPath) && new FileInfo(settings.OutputPath).Length > 512;
+            return proc.ExitCode == 0 &&
+                   File.Exists(settings.OutputPath) &&
+                   new FileInfo(settings.OutputPath).Length > 512;
         }
         catch (OperationCanceledException)
         {
@@ -523,26 +685,32 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
         }
     }
 
-    private static bool RunFfmpegSimple(string arguments)
+    private static async Task<bool> RunFfmpegAsync(string ffmpegExe, string arguments, CancellationToken cancellationToken)
     {
-        string? exe = ResolveFfmpegExecutable();
-        if (string.IsNullOrEmpty(exe)) return false;
-
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName = exe,
+                FileName = ffmpegExe,
                 Arguments = arguments,
                 UseShellExecute = false,
                 RedirectStandardError = true,
+                RedirectStandardOutput = true,
                 CreateNoWindow = true
             };
             using var proc = Process.Start(psi);
             if (proc == null) return false;
-            _ = proc.StandardError.ReadToEndAsync();
-            proc.WaitForExit(20000);
+
+            var drainErr = proc.StandardError.ReadToEndAsync();
+            var drainOut = proc.StandardOutput.ReadToEndAsync();
+
+            await proc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            await Task.WhenAll(drainErr, drainOut).ConfigureAwait(false);
             return proc.ExitCode == 0;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
@@ -559,13 +727,14 @@ public sealed class FFmpegExportEngine : IVideoRenderEngine
     {
         if (progress == null) return;
 
-        double ratio = Math.Clamp((double)currentFrame / Math.Max(1, totalFrames), 0.01, 0.99);
-        double pct = Math.Round(5.0 + ratio * 90.0, 1);
-        double fpsSpeed = currentFrame / Math.Max(0.05, elapsed.TotalSeconds);
-        double remainingSec = (totalFrames - currentFrame) / Math.Max(0.5, fpsSpeed);
-        var eta = TimeSpan.FromSeconds(Math.Clamp(remainingSec, 0, 36000));
+        double pct = 5.0 + ((double)currentFrame / Math.Max(1, totalFrames)) * 90.0;
+        double currentFps = currentFrame / Math.Max(0.05, elapsed.TotalSeconds);
+        int remainingFrames = Math.Max(0, totalFrames - currentFrame);
+        double etaSeconds = remainingFrames / Math.Max(0.5, currentFps);
 
-        string status = $"Frame {currentFrame} / {totalFrames} ({pct:0}%) • {fpsSpeed:0.0} fps [{encoderLabel}]";
-        progress.Report((pct, status, eta));
+        progress.Report((
+            Math.Clamp(pct, 0.0, 99.0),
+            $"Encoding [{encoderLabel}] Frame {currentFrame}/{totalFrames} ({currentFps:0.0} fps)",
+            TimeSpan.FromSeconds(etaSeconds)));
     }
 }

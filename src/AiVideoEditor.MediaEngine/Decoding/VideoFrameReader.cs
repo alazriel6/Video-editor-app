@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AiVideoEditor.Core.Models;
 using FFMediaToolkit.Decoding;
 using FFMediaToolkit.Graphics;
@@ -9,14 +10,21 @@ namespace AiVideoEditor.MediaEngine.Decoding;
 public sealed class VideoFrameReader : IDisposable
 {
     private readonly int _maxCacheFrames;
-    private readonly Dictionary<string, VideoCapture> _cvCaptures = new();
-    private readonly Dictionary<string, int> _cvLastFramePos = new();
-    private readonly Dictionary<string, MediaFile> _ffmpegFiles = new();
+    private readonly Dictionary<(Guid ClipId, string Path), VideoCapture> _cvCaptures = new();
+    private readonly Dictionary<(Guid ClipId, string Path), int> _cvLastFramePos = new();
+    private readonly LinkedList<(Guid ClipId, string Path)> _decoderLru = new();
+    private readonly Dictionary<(Guid ClipId, string Path), MediaFile> _ffmpegFiles = new();
     private readonly Dictionary<string, SKBitmap> _imageCache = new();
     private readonly Dictionary<(string Path, int FrameIndex), LinkedListNode<(string Path, int FrameIndex, SKBitmap Bitmap)>> _lruMap = new();
     private readonly LinkedList<(string Path, int FrameIndex, SKBitmap Bitmap)> _lruList = new();
     private readonly object _syncLock = new();
     private int _isPrefetching;
+
+    /// <summary>
+    /// Controls whether background prefetch tasks are spawned on cache hits/misses.
+    /// Disabled automatically during offline export to eliminate lock contention.
+    /// </summary>
+    public bool EnableBackgroundPrefetch { get; set; } = true;
 
     public VideoFrameReader(int maxCacheFrames = 96)
     {
@@ -48,9 +56,17 @@ public sealed class VideoFrameReader : IDisposable
                 audioDuration = audioReader.TotalTime.TotalSeconds;
             }
         }
-        catch { }
+        catch
+        {
+            // Fallback: Probe audio stream existence via FFmpeg CLI if NAudio MediaFoundation fails on container
+            if (ProbeAudioStreamWithFfmpeg(filePath, out double ffDur))
+            {
+                hasAudio = true;
+                if (ffDur > 0.1) audioDuration = ffDur;
+            }
+        }
 
-        if (ext is ".mp3" or ".wav" or ".flac" or ".aac" or ".ogg")
+        if (ext is ".mp3" or ".wav" or ".flac" or ".aac" or ".ogg" or ".m4a")
         {
             return (Math.Max(0.5, audioDuration), 0, 0, 30.0, false, true);
         }
@@ -90,19 +106,64 @@ public sealed class VideoFrameReader : IDisposable
         return (Math.Max(1.0, audioDuration), 1920, 1080, 30.0, true, hasAudio);
     }
 
+    private static bool ProbeAudioStreamWithFfmpeg(string filePath, out double durationSeconds)
+    {
+        durationSeconds = 0.0;
+        try
+        {
+            string? ffmpegExe = Exporting.FFmpegExportEngine.ResolveFfmpegExecutable();
+            if (string.IsNullOrEmpty(ffmpegExe)) return false;
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpegExe,
+                Arguments = $"-hide_banner -i \"{filePath}\"",
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc == null) return false;
+
+            string stderr = proc.StandardError.ReadToEnd();
+            proc.WaitForExit(2500);
+
+            bool hasAudio = stderr.Contains("Audio:", StringComparison.OrdinalIgnoreCase);
+            int durIdx = stderr.IndexOf("Duration:", StringComparison.OrdinalIgnoreCase);
+            if (durIdx >= 0 && durIdx + 20 < stderr.Length)
+            {
+                string sub = stderr.Substring(durIdx + 9, 12).Trim().TrimEnd(',');
+                if (TimeSpan.TryParse(sub, out var ts))
+                    durationSeconds = ts.TotalSeconds;
+            }
+            return hasAudio;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public (double Duration, int Width, int Height, double Fps) ProbeMedia(string filePath)
     {
         var (dur, w, h, fps, _, _) = ProbeMediaDetailed(filePath);
         return (dur, w, h, fps);
     }
 
-    public SKBitmap? GetFrame(MediaAsset asset, double sourceTimeSeconds, int targetWidth = 960, int targetHeight = 540)
+    public SKBitmap? GetFrame(
+        MediaAsset asset,
+        double sourceTimeSeconds,
+        int targetWidth = 960,
+        int targetHeight = 540,
+        Guid clipId = default)
     {
         if (string.IsNullOrWhiteSpace(asset.FilePath) || !File.Exists(asset.FilePath))
             return null;
 
         double fps = asset.Fps > 0.1 ? asset.Fps : 30.0;
-        double clampedTime = Math.Clamp(sourceTimeSeconds, 0.0, Math.Max(0.0, asset.Duration - (1.0 / fps)));
+        double maxValidTime = Math.Max(0.0, asset.Duration - (1.0 / fps));
+        double clampedTime = Math.Clamp(sourceTimeSeconds, 0.0, maxValidTime);
         int frameIndex = Math.Max(0, (int)Math.Round(clampedTime * fps));
         var cacheKey = (asset.FilePath, frameIndex);
 
@@ -123,18 +184,33 @@ public sealed class VideoFrameReader : IDisposable
             {
                 _lruList.Remove(existingNode);
                 _lruList.AddFirst(existingNode);
-                TriggerAsyncPrefetch(asset, frameIndex, targetWidth, targetHeight);
+                if (EnableBackgroundPrefetch)
+                    TriggerAsyncPrefetch(asset, frameIndex, targetWidth, targetHeight, clipId);
                 return existingNode.Value.Bitmap;
             }
 
-            SKBitmap? decodedBitmap = TryDecodeWithOpenCv(asset.FilePath, frameIndex, clampedTime, targetWidth, targetHeight)
-                                      ?? TryDecodeWithFFMediaToolkit(asset.FilePath, clampedTime);
+            SKBitmap? decodedBitmap = TryDecodeWithOpenCv(clipId, asset.FilePath, frameIndex, clampedTime, targetWidth, targetHeight)
+                                      ?? TryDecodeWithFFMediaToolkit(clipId, asset.FilePath, clampedTime);
+
+            // Handle Starvation Guard: if decoding near the end of the file failed, clamp back by 1-2 frames and retry
+            if (decodedBitmap == null && frameIndex > 0)
+            {
+                int fallbackFrame = Math.Max(0, frameIndex - 1);
+                double fallbackTime = fallbackFrame / fps;
+                if (_lruMap.TryGetValue((asset.FilePath, fallbackFrame), out var fallbackNode))
+                {
+                    return fallbackNode.Value.Bitmap;
+                }
+                decodedBitmap = TryDecodeWithOpenCv(clipId, asset.FilePath, fallbackFrame, fallbackTime, targetWidth, targetHeight)
+                                ?? TryDecodeWithFFMediaToolkit(clipId, asset.FilePath, fallbackTime);
+            }
 
             if (decodedBitmap == null)
                 return null;
 
             StoreInCacheLocked(cacheKey, decodedBitmap);
-            TriggerAsyncPrefetch(asset, frameIndex, targetWidth, targetHeight);
+            if (EnableBackgroundPrefetch)
+                TriggerAsyncPrefetch(asset, frameIndex, targetWidth, targetHeight, clipId);
             return decodedBitmap;
         }
     }
@@ -158,9 +234,13 @@ public sealed class VideoFrameReader : IDisposable
 
     /// <summary>
     /// Background prefetching ahead of the playhead so 60 FPS playback hits the in-memory ring cache.
+    /// Uses a dedicated prefetch Guid so it never perturbs active clip decoder positions.
     /// </summary>
-    private void TriggerAsyncPrefetch(MediaAsset asset, int currentFrameIdx, int targetW, int targetH)
+    private void TriggerAsyncPrefetch(MediaAsset asset, int currentFrameIdx, int targetW, int targetH, Guid clipId)
     {
+        if (!EnableBackgroundPrefetch)
+            return;
+
         if (Interlocked.CompareExchange(ref _isPrefetching, 1, 0) != 0)
             return;
 
@@ -174,16 +254,18 @@ public sealed class VideoFrameReader : IDisposable
             {
                 for (int step = 1; step <= 3; step++)
                 {
+                    if (!EnableBackgroundPrefetch) break;
+
                     int nextFrame = currentFrameIdx + step;
                     if (nextFrame > maxFrame) break;
 
                     lock (_syncLock)
                     {
-                        if (_lruMap.ContainsKey((path, nextFrame)))
+                        if (!EnableBackgroundPrefetch || _lruMap.ContainsKey((path, nextFrame)))
                             continue;
 
                         double tSec = nextFrame / fps;
-                        var bmp = TryDecodeWithOpenCv(path, nextFrame, tSec, targetW, targetH);
+                        var bmp = TryDecodeWithOpenCv(clipId, path, nextFrame, tSec, targetW, targetH);
                         if (bmp != null)
                         {
                             StoreInCacheLocked((path, nextFrame), bmp);
@@ -199,27 +281,54 @@ public sealed class VideoFrameReader : IDisposable
         });
     }
 
-    private unsafe SKBitmap? TryDecodeWithOpenCv(string filePath, int targetFrameIndex, double timestampSeconds, int targetWidth, int targetHeight)
+    private unsafe SKBitmap? TryDecodeWithOpenCv(
+        Guid clipId,
+        string filePath,
+        int targetFrameIndex,
+        double timestampSeconds,
+        int targetWidth,
+        int targetHeight)
     {
         try
         {
-            if (!_cvCaptures.TryGetValue(filePath, out var capture) || !capture.IsOpened())
+            var poolKey = (clipId, filePath);
+
+            if (!_cvCaptures.TryGetValue(poolKey, out var capture) || !capture.IsOpened())
             {
                 capture?.Dispose();
+
+                // Evict oldest decoder instance if pool exceeds 16 concurrent leases
+                while (_cvCaptures.Count >= 16 && _decoderLru.Last != null)
+                {
+                    var oldestKey = _decoderLru.Last.Value;
+                    _decoderLru.RemoveLast();
+                    if (_cvCaptures.Remove(oldestKey, out var oldCap))
+                    {
+                        try { oldCap.Dispose(); } catch { }
+                    }
+                    _cvLastFramePos.Remove(oldestKey);
+                }
+
                 capture = new VideoCapture(filePath);
                 if (!capture.IsOpened())
                 {
                     capture.Dispose();
                     return null;
                 }
-                _cvCaptures[filePath] = capture;
-                _cvLastFramePos[filePath] = -999;
+                _cvCaptures[poolKey] = capture;
+                _cvLastFramePos[poolKey] = -999;
+                _decoderLru.AddFirst(poolKey);
+            }
+            else
+            {
+                _decoderLru.Remove(poolKey);
+                _decoderLru.AddFirst(poolKey);
             }
 
-            int lastPos = _cvLastFramePos.GetValueOrDefault(filePath, -999);
+            int lastPos = _cvLastFramePos.GetValueOrDefault(poolKey, -999);
             int delta = targetFrameIndex - lastPos;
 
-            if (delta < 0 || delta > 12)
+            if (delta < 0 || delta > 24)
             {
                 capture.Set(VideoCaptureProperties.PosFrames, targetFrameIndex);
             }
@@ -232,6 +341,12 @@ public sealed class VideoFrameReader : IDisposable
             }
 
             using var rawMat = new Mat();
+            if (delta == 0 && lastPos >= 0)
+            {
+                // Re-reading exact same frame index when not in LRU cache
+                capture.Set(VideoCaptureProperties.PosFrames, targetFrameIndex);
+            }
+
             if (!capture.Read(rawMat) || rawMat.Empty())
             {
                 capture.Set(VideoCaptureProperties.PosMsec, timestampSeconds * 1000.0);
@@ -239,7 +354,7 @@ public sealed class VideoFrameReader : IDisposable
                     return null;
             }
 
-            _cvLastFramePos[filePath] = targetFrameIndex;
+            _cvLastFramePos[poolKey] = targetFrameIndex;
 
             int srcW = rawMat.Width;
             int srcH = rawMat.Height;
@@ -280,21 +395,22 @@ public sealed class VideoFrameReader : IDisposable
         }
     }
 
-    private unsafe SKBitmap? TryDecodeWithFFMediaToolkit(string filePath, double timestampSeconds)
+    private unsafe SKBitmap? TryDecodeWithFFMediaToolkit(Guid clipId, string filePath, double timestampSeconds)
     {
         if (!FfmpegBootstrapper.IsAvailable)
             return null;
 
         try
         {
-            if (!_ffmpegFiles.TryGetValue(filePath, out var mediaFile))
+            var poolKey = (clipId, filePath);
+            if (!_ffmpegFiles.TryGetValue(poolKey, out var mediaFile))
             {
                 mediaFile = MediaFile.Open(filePath, new MediaOptions
                 {
                     StreamsToLoad = MediaMode.Video,
                     VideoPixelFormat = ImagePixelFormat.Bgra32
                 });
-                _ffmpegFiles[filePath] = mediaFile;
+                _ffmpegFiles[poolKey] = mediaFile;
             }
 
             if (!mediaFile.HasVideo)
@@ -338,6 +454,7 @@ public sealed class VideoFrameReader : IDisposable
             }
             _cvCaptures.Clear();
             _cvLastFramePos.Clear();
+            _decoderLru.Clear();
 
             foreach (var mf in _ffmpegFiles.Values)
             {

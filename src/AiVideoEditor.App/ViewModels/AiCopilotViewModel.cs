@@ -49,8 +49,8 @@ public partial class AiCopilotViewModel : ViewModelBase
 
         Messages.Add(new ConsoleExecutionEntry
         {
-            Header = "VORTEX AI ASSISTANT — HYBRID LOCAL (LM STUDIO) & CLOUD AGENT",
-            Content = "Type natural language editing commands or click a Quick AI preset:\n  • \"Potong bagian yang hening di seluruh video, tambahkan subtitle otomatis warna kuning, dan beri efek zoom-in keyframe di awal video\"\n  • \"Buat animasi zoom-in halus (Scale 1.0 ke 1.25) dengan keyframe di detik ke-0 sampai ke-3\""
+            Header = "VORTEX SMART ASSISTANT — LOCAL (LM STUDIO) & CLOUD AGENT",
+            Content = "Type natural language editing commands or click a Quick preset:\n  • \"Potong bagian yang hening di seluruh video, tambahkan subtitle otomatis warna kuning, dan beri efek zoom-in keyframe di awal video\"\n  • \"Buat animasi zoom-in halus (Scale 1.0 ke 1.25) dengan keyframe di detik ke-0 sampai ke-3\""
         });
     }
 
@@ -70,7 +70,7 @@ public partial class AiCopilotViewModel : ViewModelBase
         });
 
         IsProcessing = true;
-        _setStatus("🤖 AI Edit Assistant: Planning and executing timeline & keyframe operations...");
+        _setStatus("Smart Edit Assistant: Planning and executing timeline & keyframe operations...");
 
         try
         {
@@ -83,7 +83,7 @@ public partial class AiCopilotViewModel : ViewModelBase
             {
                 string afterJson = ProjectSerializer.ToJson(doc);
                 _undoRedo.ExecuteCommand(new DocumentSnapshotCommand(
-                    $"AI Edit: {(prompt.Length > 24 ? prompt[..24] + "..." : prompt)}",
+                    $"Edit: {(prompt.Length > 24 ? prompt[..24] + "..." : prompt)}",
                     beforeJson,
                     afterJson,
                     _restoreDocument));
@@ -95,14 +95,14 @@ public partial class AiCopilotViewModel : ViewModelBase
 
             Messages.Add(new ConsoleExecutionEntry
             {
-                Header = $"AI EXECUTION LOG ({engineLabel.ToUpperInvariant()})",
+                Header = $"EXECUTION LOG ({engineLabel.ToUpperInvariant()})",
                 Content = execResult.AssistantMessage
             });
 
             _onTimelineMutated();
             _setStatus(execResult.TimelineModified
-                ? $"🤖 AI Edit Assistant: Executed {execResult.ExecutedActions.Count} operation(s) (Undo with Ctrl+Z)."
-                : "🤖 AI Edit Assistant: Evaluation completed.");
+                ? $"Smart Edit Assistant: Executed {execResult.ExecutedActions.Count} operation(s) (Undo with Ctrl+Z)."
+                : "Smart Edit Assistant: Evaluation completed.");
         }
         catch (Exception ex)
         {

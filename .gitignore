@@ -12,6 +12,3 @@ TestResults/
 .env.*
 !.env.example
 "@ | Set-Content .gitignore
-
-# Ignore all Markdown files
-*.md

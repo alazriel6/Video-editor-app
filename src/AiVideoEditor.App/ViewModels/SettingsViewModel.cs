@@ -137,7 +137,7 @@ public partial class SettingsViewModel : ViewModelBase
     {
         "LM Studio",
         "Ollama",
-        "Local GGUF"
+        "Local Offline Model"
     };
 
     public IReadOnlyList<string> CloudProviders { get; } = new[]
@@ -290,6 +290,6 @@ public partial class SettingsViewModel : ViewModelBase
         _config.ElevenLabsApiKey = ElevenLabsKey.Trim();
 
         _config.Save();
-        _setStatus($"Vortex Cut Studio AI Settings Saved ({(_config.AgentMode == AiExecutionMode.Local ? LocalServerProvider : SelectedCloudLlmProvider)} active).");
+        _setStatus($"Vortex Cut Studio Settings Saved ({(_config.AgentMode == AiExecutionMode.Local ? LocalServerProvider : SelectedCloudLlmProvider)} active).");
     }
 }

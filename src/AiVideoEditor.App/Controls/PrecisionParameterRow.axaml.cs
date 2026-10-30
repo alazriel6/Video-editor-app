@@ -198,6 +198,13 @@ public partial class PrecisionParameterRow : UserControl
     {
         InitializeComponent();
         UpdateResetButtonAppearance();
+        UpdateKeyframeDiamondAppearance();
+
+        if (TxtLabel != null)
+        {
+            TxtLabel.PointerEntered += (_, _) => TxtLabel.Foreground = new SolidColorBrush(Color.Parse("#FFE6E6EB"));
+            TxtLabel.PointerExited += (_, _) => TxtLabel.Foreground = new SolidColorBrush(Color.Parse("#FF9A9AA6"));
+        }
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -206,6 +213,10 @@ public partial class PrecisionParameterRow : UserControl
         if (change.Property == ValueProperty || change.Property == DefaultValueProperty)
         {
             UpdateResetButtonAppearance();
+        }
+        else if (change.Property == DiamondIconProperty)
+        {
+            UpdateKeyframeDiamondAppearance();
         }
     }
 
@@ -216,6 +227,15 @@ public partial class PrecisionParameterRow : UserControl
         BtnReset.Foreground = isModified
             ? new SolidColorBrush(Color.FromRgb(226, 228, 236)) // #E2E4EC bright when modified
             : new SolidColorBrush(Color.FromRgb(78, 82, 96));   // #4E5260 dimmed at default
+    }
+
+    private void UpdateKeyframeDiamondAppearance()
+    {
+        if (BtnKeyframe == null) return;
+        bool hasKeyframe = DiamondIcon == "◆";
+        BtnKeyframe.Foreground = hasKeyframe
+            ? new SolidColorBrush(Color.FromRgb(245, 158, 11)) // #F59E0B amber active
+            : new SolidColorBrush(Color.FromRgb(78, 82, 96));   // #4E5260 dimmed inactive
     }
 
     private void ExecuteReset()

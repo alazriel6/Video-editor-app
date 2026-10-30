@@ -52,7 +52,7 @@ public partial class MediaBinViewModel : ViewModelBase
         new() { Title = "35mm Film Grain", Category = "Video Effects", Description = "Organic cinema luma texture", Code = "Fx:FilmGrain", Badge = "VIDEO FX" },
         new() { Title = "Cinematic Vignette", Category = "Video Effects", Description = "Soft radial edge darkening", Code = "Fx:Vignette", Badge = "VIDEO FX" },
         new() { Title = "Drop Shadow (PIP)", Category = "Video Effects", Description = "Soft shadow behind overlay video", Code = "Fx:DropShadow", Badge = "VIDEO FX" },
-        new() { Title = "Remove Background", Category = "Video Effects", Description = "Isolate subject from background", Code = "Fx:RemoveBackground", Badge = "AI FX" },
+        new() { Title = "Remove Background", Category = "Video Effects", Description = "Isolate subject from background", Code = "Fx:RemoveBackground", Badge = "STUDIO FX" },
 
         // Color Presets (Section 6.1)
         new() { Title = "Cinematic Teal & Orange", Category = "Color Presets", Description = "Cool shadows with warm skin tones", Code = "Color:Cinematic Teal & Orange", Badge = "COLOR LUT" },

@@ -501,6 +501,71 @@ public partial class TimelineViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    public void AddStandaloneTransitionBlockAtSelectionOrPlayhead()
+    {
+        double centerTime = PlayheadTime;
+        TimelineTrack? targetTrack = null;
+
+        if (SelectedClip != null)
+        {
+            centerTime = SelectedClip.TimelineStart + SelectedClip.Duration;
+            targetTrack = _document.Tracks.FirstOrDefault(t => t.Clips.Any(c => c.Id == SelectedClip.Id));
+        }
+
+        if (targetTrack == null)
+            targetTrack = _document.Tracks.FirstOrDefault(t => t.Type == TrackType.Video && !t.IsLocked)
+                       ?? _document.Tracks.FirstOrDefault(t => !t.IsLocked)
+                       ?? _document.Tracks.FirstOrDefault();
+
+        if (targetTrack == null) return;
+
+        AddStandaloneTransitionBlockOnTrack(targetTrack, centerTime - 0.25, 0.5, "Cross Dissolve");
+    }
+
+    public void AddStandaloneTransitionBlockAtTime(double timeSeconds)
+    {
+        var targetTrack = _document.Tracks.FirstOrDefault(t => t.Type == TrackType.Video && !t.IsLocked)
+                       ?? _document.Tracks.FirstOrDefault(t => !t.IsLocked)
+                       ?? _document.Tracks.FirstOrDefault();
+
+        if (targetTrack == null) return;
+
+        AddStandaloneTransitionBlockOnTrack(targetTrack, Math.Max(0, timeSeconds - 0.25), 0.5, "Cross Dissolve");
+    }
+
+    public void AddStandaloneTransitionBlockOnTrack(TimelineTrack track, double startTime, double duration, string transitionType)
+    {
+        TimelineClip? created = null;
+        _undoRedo.RecordSnapshot(_document, $"Add {transitionType} Transition Block", () =>
+        {
+            created = new TimelineClip
+            {
+                Id = Guid.NewGuid(),
+                Label = $"{transitionType} Transition",
+                TimelineStart = Math.Max(0, Math.Round(startTime, 3)),
+                Duration = Math.Max(0.1, Math.Round(duration, 3)),
+                IsTransitionClip = true,
+                TransitionType = transitionType,
+                TransitionDuration = Math.Max(0.1, Math.Round(duration, 3)),
+                TransitionEasing = "EaseInOut",
+                TransitionSpeed = 1.0,
+                InTransition = new TransitionSpec
+                {
+                    Type = transitionType,
+                    Duration = Math.Max(0.1, Math.Round(duration, 3)),
+                    Easing = "EaseInOut",
+                    Speed = 1.0
+                }
+            };
+            track.Clips.Add(created);
+        }, _ => { });
+
+        SelectedClip = created;
+        _refreshTimelineUi();
+        _setStatus($"Added {transitionType} transition block ({duration:0.0#}s) on track '{track.Name}'.");
+    }
+
+    [RelayCommand]
     public async Task GenerateAutoCaptionsAsync()
     {
         if (IsBusyTranscribing) return;
@@ -600,6 +665,47 @@ public partial class TimelineViewModel : ViewModelBase
             {
                 ActiveTranscriptSegments.Add(seg);
             }
+        }
+    }
+
+    [RelayCommand]
+    public void AddAdjustmentLayer()
+    {
+        TimelineClip? adj = null;
+        _undoRedo.RecordSnapshot(_document, "Add Adjustment Layer", () =>
+        {
+            adj = _timelineService.AddAdjustmentLayerClip(_document, PlayheadTime, 5.0, "Adjustment Layer");
+        }, _ => { });
+
+        if (adj != null)
+        {
+            SelectedClip = adj;
+            _refreshTimelineUi();
+            _setStatus($"Added Adjustment Layer at {TimecodeCalculator.SecondsToSmpte(PlayheadTime, _document.Fps)}.");
+        }
+    }
+
+    [RelayCommand]
+    public void CreateCompoundClip()
+    {
+        if (SelectedClip == null)
+        {
+            _setStatus("Select a clip on the timeline to nest into a Compound Clip.");
+            return;
+        }
+
+        Guid targetId = SelectedClip.Id;
+        TimelineClip? compound = null;
+        _undoRedo.RecordSnapshot(_document, $"Nest '{SelectedClip.Label}' into Compound Clip", () =>
+        {
+            compound = _timelineService.CreateCompoundClip(_document, targetId);
+        }, _ => { });
+
+        if (compound != null)
+        {
+            SelectedClip = compound;
+            _refreshTimelineUi();
+            _setStatus($"Created Compound Clip '{compound.Label}'.");
         }
     }
 }

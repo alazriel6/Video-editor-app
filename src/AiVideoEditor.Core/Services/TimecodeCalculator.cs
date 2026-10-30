@@ -16,7 +16,10 @@ public static class TimecodeCalculator
         int minutes = (int)((totalSeconds / 60) % 60);
         int hours = (int)(totalSeconds / 3600);
 
-        return $"{hours:00}:{minutes:00}:{seconds:00}:{frames:00}";
+        if (hours > 0)
+            return $"{hours:00}:{minutes:00}:{seconds:00}.{frames:00}";
+
+        return $"{minutes:00}:{seconds:00}.{frames:00}";
     }
 
     public static long SecondsToFrames(double timeSeconds, double fps = 30.0)
@@ -34,10 +37,18 @@ public static class TimecodeCalculator
         seconds = 0;
         if (string.IsNullOrWhiteSpace(smpte)) return false;
 
-        var parts = smpte.Trim().Split(':');
-        if (parts.Length != 4) return false;
+        var parts = smpte.Trim().Split(new[] { ':', '.' });
+        if (parts.Length == 3 &&
+            int.TryParse(parts[0], out int m3) &&
+            int.TryParse(parts[1], out int s3) &&
+            int.TryParse(parts[2], out int f3))
+        {
+            seconds = m3 * 60 + s3 + (f3 / Math.Max(1.0, fps));
+            return true;
+        }
 
-        if (int.TryParse(parts[0], out int h) &&
+        if (parts.Length == 4 &&
+            int.TryParse(parts[0], out int h) &&
             int.TryParse(parts[1], out int m) &&
             int.TryParse(parts[2], out int s) &&
             int.TryParse(parts[3], out int f))

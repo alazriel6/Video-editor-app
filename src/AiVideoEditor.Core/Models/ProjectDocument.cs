@@ -26,6 +26,8 @@ public class MediaAsset
     public string Name { get; set; } = string.Empty;
     public string BinName { get; set; } = "Master Bin";
     public string FilePath { get; set; } = string.Empty;
+    public string RelativeFilePath { get; set; } = string.Empty;
+    public long FileSizeBytes { get; set; }
     public string ProxyPath { get; set; } = string.Empty;
     public string WaveformCachePath { get; set; } = string.Empty;
     public string PosterThumbnailPath { get; set; } = string.Empty;
@@ -47,7 +49,12 @@ public class MediaAsset
     public List<TranscriptSegment> Transcript { get; set; } = new();
 
     [JsonIgnore]
-    public string ResolutionSummary => HasVideo ? $"{Width}x{Height} • {Fps:0.##} fps" : $"{SampleRate / 1000.0:0.#} kHz Stereo";
+    public bool IsOffline => !string.IsNullOrWhiteSpace(FilePath) && !File.Exists(FilePath);
+
+    [JsonIgnore]
+    public string ResolutionSummary => IsOffline
+        ? "OFFLINE • Relink Required"
+        : (HasVideo ? $"{Width}x{Height} • {Fps:0.##} fps" : $"{SampleRate / 1000.0:0.#} kHz Stereo");
 }
 
 public class ProjectSettingsSpec
@@ -63,6 +70,10 @@ public class ProjectDocument
 {
     public string ProjectVersion { get; set; } = "3.0";
     public string ProjectName { get; set; } = "Untitled Project";
+
+    [JsonIgnore]
+    public string? CurrentProjectFilePath { get; set; }
+
     public ProjectSettingsSpec Settings { get; set; } = new();
     public int Width { get; set; } = 1920;
     public int Height { get; set; } = 1080;
@@ -77,6 +88,44 @@ public class ProjectDocument
     public List<MediaAsset> MediaPool { get; set; } = new();
     public List<TimelineTrack> Tracks { get; set; } = new();
     public List<TimelineMarker> Markers { get; set; } = new();
+
+    [JsonIgnore]
+    private readonly Dictionary<Guid, MediaAsset> _mediaAssetCache = new();
+    [JsonIgnore]
+    private int _mediaAssetCacheVersion = -1;
+
+    public void InvalidateAssetCache()
+    {
+        lock (_mediaAssetCache)
+        {
+            _mediaAssetCacheVersion = -1;
+            _mediaAssetCache.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Thread-safe O(1) media asset lookup with automatic cache synchronization.
+    /// </summary>
+    public MediaAsset? FindAsset(Guid id)
+    {
+        if (id == Guid.Empty) return null;
+
+        lock (_mediaAssetCache)
+        {
+            if (_mediaAssetCacheVersion != MediaPool.Count)
+            {
+                _mediaAssetCache.Clear();
+                for (int i = 0; i < MediaPool.Count; i++)
+                {
+                    var a = MediaPool[i];
+                    _mediaAssetCache[a.Id] = a;
+                }
+                _mediaAssetCacheVersion = MediaPool.Count;
+            }
+
+            return _mediaAssetCache.TryGetValue(id, out var asset) ? asset : null;
+        }
+    }
 
     [JsonIgnore]
     public double TotalDuration

@@ -93,28 +93,29 @@ public sealed class ScrubbableNumberBox : UserControl
 
         _displayBlock = new TextBlock
         {
-            FontFamily = new FontFamily("JetBrains Mono, Cascadia Mono, Consolas, Monospace"),
+            FontFamily = new FontFamily("Cascadia Mono, JetBrains Mono, Consolas, Monospace"),
             FontSize = 10.5,
             Foreground = new SolidColorBrush(Color.FromRgb(243, 244, 246)),
-            HorizontalAlignment = HorizontalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center,
-            TextAlignment = TextAlignment.Center,
+            TextAlignment = TextAlignment.Right,
+            Margin = new Thickness(0, 0, 4, 0),
             IsHitTestVisible = false
         };
 
         _editBox = new TextBox
         {
-            FontFamily = new FontFamily("JetBrains Mono, Cascadia Mono, Consolas, Monospace"),
+            FontFamily = new FontFamily("Cascadia Mono, JetBrains Mono, Consolas, Monospace"),
             FontSize = 10.5,
             Foreground = new SolidColorBrush(Color.FromRgb(243, 244, 246)),
-            Background = new SolidColorBrush(Color.FromRgb(17, 18, 21)),
+            Background = new SolidColorBrush(Color.Parse("#121214")),
             BorderThickness = new Thickness(0),
             Padding = new Thickness(2, 0),
             MinHeight = 18,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            TextAlignment = TextAlignment.Center,
+            TextAlignment = TextAlignment.Right,
             IsVisible = false
         };
 
@@ -127,8 +128,8 @@ public sealed class ScrubbableNumberBox : UserControl
 
         _outerBorder = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(20, 21, 25)), // #141519
-            BorderBrush = new SolidColorBrush(Color.FromRgb(46, 50, 62)), // #2E323E
+            Background = new SolidColorBrush(Color.Parse("#121214")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#2E2E34")),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(2),
             Height = 22,

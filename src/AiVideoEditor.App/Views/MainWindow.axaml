@@ -3,7 +3,7 @@
         xmlns:controls="using:AiVideoEditor.App.Controls"
         xmlns:tl="using:AiVideoEditor.App.Controls.TimelineControl"
         x:Class="AiVideoEditor.App.Views.MainWindow"
-        Title="Vortex Cut Studio — Professional Video &amp; AI Editor"
+        Title="{Binding WindowTitle}"
         Width="1660" Height="960"
         MinWidth="1240" MinHeight="760"
         Background="#FF111215"
@@ -17,11 +17,16 @@
             <Grid ColumnDefinitions="Auto,Auto,*,Auto">
                 <Menu Grid.Column="0" Background="Transparent" VerticalAlignment="Center" FontSize="11">
                     <MenuItem Header="File">
+                        <MenuItem Header="New Project (Ctrl+N)" Click="OnNewProjectClick"/>
+                        <MenuItem Header="Open Project (.vcsproj)... (Ctrl+O)" Click="OnLoadProjectClick"/>
+                        <MenuItem Header="Save Project (Ctrl+S)" Click="OnSaveProjectClick"/>
+                        <MenuItem Header="Save Project As (.vcsproj)... (Ctrl+Shift+S)" Click="OnSaveProjectAsClick"/>
+                        <Separator/>
                         <MenuItem Header="Import Media... (Ctrl+I)" Click="OnImportMediaClick"/>
+                        <MenuItem Header="Relink Missing Media..." Click="OnRelinkMissingMediaClick"/>
+                        <MenuItem Header="Archive / Collect Project Folder..." Click="OnArchiveProjectClick"/>
                         <Separator/>
-                        <MenuItem Header="Open Project (.vortex)... (Ctrl+O)" Click="OnLoadProjectClick"/>
-                        <MenuItem Header="Save Project (.vortex)... (Ctrl+S)" Click="OnSaveProjectClick"/>
-                        <Separator/>
+                        <MenuItem Header="Export FCP7 XML / CMX 3600 EDL (Resolve / Premiere)..." Click="OnExportInterchangeClick"/>
                         <MenuItem Header="Export Video... (Ctrl+M)" Command="{Binding OpenExportModalCommand}"/>
                     </MenuItem>
                     <MenuItem Header="Edit">
@@ -47,6 +52,9 @@
                         <MenuItem Header="Add Timeline Marker (M)" Command="{Binding Timeline.AddMarkerAtPlayheadCommand}"/>
                         <Separator/>
                         <MenuItem Header="Add Text / Title (T)" Command="{Binding Timeline.AddQuickTextClipCommand}"/>
+                        <MenuItem Header="Add Adjustment Layer" Command="{Binding Timeline.AddAdjustmentLayerCommand}"/>
+                        <MenuItem Header="Create Compound Clip (Nest Selected)" Command="{Binding Timeline.CreateCompoundClipCommand}"/>
+                        <Separator/>
                         <MenuItem Header="Reveal File in Explorer" Command="{Binding Timeline.RevealSelectedClipInExplorerCommand}"/>
                     </MenuItem>
                     <MenuItem Header="Sequence">
@@ -63,9 +71,9 @@
                         <MenuItem Header="Program Monitor" Command="{Binding SwitchToProgramMonitorCommand}"/>
                         <MenuItem Header="Toggle Safe Margins" Click="OnToggleSafeMarginsClick"/>
                     </MenuItem>
-                    <MenuItem Header="AI Studio">
-                        <MenuItem Header="AI Studio Settings (LM Studio / Gemini / ChatGPT)... (Ctrl+,)" Command="{Binding OpenSettingsModalCommand}"/>
-                        <MenuItem Header="Open AI Edit Assistant (Ctrl+K)" Command="{Binding FocusAiAssistantCommand}"/>
+                    <MenuItem Header="Automation &amp; Speech">
+                        <MenuItem Header="Automation &amp; Speech Settings (LM Studio / Gemini / ChatGPT)... (Ctrl+,)" Command="{Binding OpenSettingsModalCommand}"/>
+                        <MenuItem Header="Open Smart Edit Assistant (Ctrl+K)" Command="{Binding FocusAiAssistantCommand}"/>
                     </MenuItem>
                 </Menu>
 
@@ -79,7 +87,7 @@
                 <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                     <Button Content="↶ Undo" Command="{Binding UndoCommand}" IsEnabled="{Binding CanUndo}" ToolTip.Tip="{Binding UndoTooltip}"/>
                     <Button Content="↷ Redo" Command="{Binding RedoCommand}" IsEnabled="{Binding CanRedo}" ToolTip.Tip="{Binding RedoTooltip}"/>
-                    <Button Content="⚙ AI Settings" Command="{Binding OpenSettingsModalCommand}" BorderBrush="#FF10B981"/>
+                    <Button Content="⚙ Settings" Command="{Binding OpenSettingsModalCommand}" BorderBrush="#FF10B981"/>
                     <Button Content="Export Video" Command="{Binding OpenExportModalCommand}"
                             Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"/>
                 </StackPanel>
@@ -232,7 +240,7 @@
                                 <StackPanel Spacing="8">
                                     <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8">
                                         <StackPanel Spacing="6">
-                                            <TextBlock Text="AI VOICEOVER GENERATOR" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                            <TextBlock Text="VOICEOVER GENERATOR" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
                                             <ComboBox ItemsSource="{Binding MediaBin.VoicePresets}"
                                                       SelectedItem="{Binding MediaBin.SelectedVoicePreset}" HorizontalAlignment="Stretch"/>
                                             <TextBox Text="{Binding MediaBin.TtsInputText}" AcceptsReturn="True" Height="54"
@@ -348,334 +356,780 @@
 
                         <!-- TAB 1: INSPECTOR -->
                         <TabItem Header="Inspector &amp; Keyframes ◇">
-                            <ScrollViewer Margin="2">
-                                <StackPanel Spacing="6">
+                            <Grid RowDefinitions="Auto,Auto,*" Margin="2">
 
-                                    <!-- Clean Clip Name Header (Section 1.1) -->
-                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="6">
-                                        <Grid ColumnDefinitions="*,Auto,Auto">
-                                            <TextBlock Grid.Column="0" Text="{Binding Inspector.ClipTitle}"
-                                                       FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11" VerticalAlignment="Center"
-                                                       TextTrimming="CharacterEllipsis"/>
-                                            <TextBlock Grid.Column="1" Text="{Binding Inspector.KeyframeSummaryText}"
-                                                       Foreground="#FFF59E0B" FontWeight="SemiBold" FontSize="10" VerticalAlignment="Center" Margin="6,0"/>
-                                            <Button Grid.Column="2" Content="Reset All" Command="{Binding Inspector.ResetTransformsCommand}"
-                                                    Padding="6,1" FontSize="9.5"/>
+                                <!-- Row 0: Clean Clip Name Header & Master Reset -->
+                                <Border Grid.Row="0" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="4" Padding="8,5" Margin="0,0,0,4">
+                                    <Grid ColumnDefinitions="*,Auto,Auto">
+                                        <TextBlock Grid.Column="0" Text="{Binding Inspector.ClipTitle}"
+                                                   FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11.5" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Inspector.KeyframeSummaryText}"
+                                                   Foreground="#FFF59E0B" FontWeight="SemiBold" FontSize="10" VerticalAlignment="Center" Margin="8,0"/>
+                                        <Button Grid.Column="2" Content="Reset All" Command="{Binding Inspector.ResetTransformsCommand}"
+                                                Padding="7,2" FontSize="10"/>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Row 1: Premiere / DaVinci Dual-Pane Keyframe Mini-Timeline with Time Ruler -->
+                                <Border Grid.Row="1" Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4" Padding="6" Margin="0,0,0,4"
+                                        IsEnabled="{Binding Inspector.HasSelectedClip}">
+                                    <StackPanel Spacing="4">
+                                        <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                                            <TextBlock Grid.Column="0" Text="KEYFRAME TIMELINE (◆)" FontWeight="Bold" Foreground="#FFF59E0B" FontSize="10" VerticalAlignment="Center"/>
+                                            <Button Grid.Column="1" Content="+ Keyframe All (K)"
+                                                    Command="{Binding Inspector.AddMasterKeyframeAtPlayheadCommand}"
+                                                    Foreground="#FFF59E0B" Padding="5,1" FontSize="9.5" Margin="0,0,4,0"/>
+                                            <ComboBox Grid.Column="2" ItemsSource="{Binding Inspector.EasingOptions}"
+                                                      SelectedItem="{Binding Inspector.SelectedEasingType}"
+                                                      Width="96" MinHeight="20" FontSize="9.5" Margin="0,0,4,0"/>
+                                            <Button Grid.Column="3" Content="Clear" Command="{Binding Inspector.ClearAllKeyframesCommand}"
+                                                    Padding="5,1" FontSize="9.5"/>
                                         </Grid>
-                                    </Border>
+                                        <controls:KeyframeGraphControl x:Name="InspectorKeyframeGraph"/>
+                                    </StackPanel>
+                                </Border>
 
-                                    <!-- Premiere / DaVinci Dual-Pane Keyframe Mini-Timeline with Time Ruler (Section 4) -->
-                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="6"
-                                            IsEnabled="{Binding Inspector.HasSelectedClip}">
-                                        <StackPanel Spacing="4">
-                                            <Grid ColumnDefinitions="*,Auto,Auto,Auto">
-                                                <TextBlock Grid.Column="0" Text="KEYFRAME TIMELINE (◆)" FontWeight="Bold" Foreground="#FFF59E0B" FontSize="10" VerticalAlignment="Center"/>
-                                                <Button Grid.Column="1" Content="+ Keyframe All (K)"
-                                                        Command="{Binding Inspector.AddMasterKeyframeAtPlayheadCommand}"
-                                                        Foreground="#FFF59E0B" Padding="5,1" FontSize="9.5" Margin="0,0,4,0"/>
-                                                <ComboBox Grid.Column="2" ItemsSource="{Binding Inspector.EasingOptions}"
-                                                          SelectedItem="{Binding Inspector.SelectedEasingType}"
-                                                          Width="96" MinHeight="20" FontSize="9.5" Margin="0,0,4,0"/>
-                                                <Button Grid.Column="3" Content="Clear" Command="{Binding Inspector.ClearAllKeyframesCommand}"
-                                                        Padding="5,1" FontSize="9.5"/>
-                                            </Grid>
-                                            <controls:KeyframeGraphControl x:Name="InspectorKeyframeGraph"/>
-                                            <TextBlock Text="Click time ruler to scrub • Drag ◆ to move in time • Right-click ◆ for Smooth/Linear/Delete"
-                                                       Foreground="#FF9CA3AF" FontSize="9.5"/>
-                                        </StackPanel>
-                                    </Border>
+                                <!-- Row 2: Category Sub-Tabs Strip [ Video & Transform ] [ Color & Curves ] [ Text Studio ] [ Audio ] [ Effects ] -->
+                                <TabControl Grid.Row="2" SelectedIndex="{Binding Inspector.SelectedInspectorTabIndex}" Padding="0" Margin="0,2,0,0">
 
-                                    <!-- PRO TEXT & TYPOGRAPHY STUDIO (Section 7.2) -->
-                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8"
-                                            IsVisible="{Binding Inspector.IsTextClip}">
-                                        <StackPanel Spacing="5">
-                                            <TextBlock Text="TEXT &amp; TYPOGRAPHY STUDIO" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5"/>
-                                            <TextBox x:Name="InspectorSubtitleTextBox"
-                                                     Text="{Binding Inspector.SubtitleText}"
-                                                     AcceptsReturn="True" Height="46"
-                                                     Watermark="Type title or subtitle text..."/>
+                                    <!-- SUB-TAB 0: VIDEO & TRANSFORM -->
+                                    <TabItem Header="🎬 Video" FontSize="11" Padding="8,4">
+                                        <ScrollViewer Margin="0,4,0,0">
+                                            <StackPanel Spacing="6" IsEnabled="{Binding Inspector.HasSelectedClip}">
 
-                                            <Grid ColumnDefinitions="*,100" Margin="0,2,0,0">
-                                                <ComboBox Grid.Column="0" ItemsSource="{Binding Inspector.SystemFontFamilies}"
-                                                          SelectedItem="{Binding Inspector.SelectedFontFamily}"
-                                                          HorizontalAlignment="Stretch" Margin="0,0,4,0" ToolTip.Tip="Font Family"/>
-                                                <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.FontWeightStyles}"
-                                                          SelectedItem="{Binding Inspector.SelectedFontWeightStyle}"
-                                                          HorizontalAlignment="Stretch" ToolTip.Tip="Font Weight / Style"/>
-                                            </Grid>
+                                                <!-- Accordion Card: TRANSFORM -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                                <Button Grid.Column="0" Content="{Binding Inspector.TransformArrow}"
+                                                                        Command="{Binding Inspector.ToggleSectionCommand}" CommandParameter="Transform"
+                                                                        Background="Transparent" BorderThickness="0" Padding="0" Margin="0,0,6,0"
+                                                                        Foreground="#FF9A9AA6" FontSize="10" Width="14"/>
+                                                                <TextBlock Grid.Column="1" Text="TRANSFORM" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="2" Content="↺" Command="{Binding Inspector.ResetSectionCommand}" CommandParameter="Transform"
+                                                                        Background="Transparent" BorderThickness="0" Padding="3,0" Foreground="#FF9A9AA6" FontSize="11" ToolTip.Tip="Reset Transform"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.IsTransformExpanded}">
+                                                            <StackPanel Spacing="2">
+                                                                <controls:PrecisionParameterRow Label="Scale %" Minimum="10" Maximum="400" DefaultValue="100" Step="1" Decimals="1" Unit="%"
+                                                                                                Value="{Binding Inspector.ScalePercent}"
+                                                                                                ShowKeyframeControls="True"
+                                                                                                KeyframeDiamondIcon="{Binding Inspector.ScaleDiamondIcon}"
+                                                                                                PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                                                ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                                                NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                                                KeyframeParameter="Scale"/>
 
-                                            <StackPanel Spacing="1">
-                                                <controls:PrecisionParameterRow Label="Font Size" Minimum="16" Maximum="140" DefaultValue="48" Step="1" Decimals="0" Unit="pt"
-                                                                                Value="{Binding Inspector.FontSize}"/>
-                                                <controls:PrecisionParameterRow Label="Spacing" Minimum="-5" Maximum="30" DefaultValue="0.5" Step="0.2" Decimals="1" Unit="px"
-                                                                                Value="{Binding Inspector.LetterSpacing}"/>
-                                                <controls:PrecisionParameterRow Label="Line Height" Minimum="0.8" Maximum="2.5" DefaultValue="1.2" Step="0.05" Decimals="2" Unit="x"
-                                                                                Value="{Binding Inspector.LineHeight}"/>
-                                                <controls:PrecisionParameterRow Label="Stroke W" Minimum="0" Maximum="16" DefaultValue="3" Step="0.5" Decimals="1" Unit="px"
-                                                                                Value="{Binding Inspector.StrokeWidth}"/>
-                                                <controls:PrecisionParameterRow Label="Shadow Blur" Minimum="0" Maximum="24" DefaultValue="6" Step="0.5" Decimals="1" Unit="px"
-                                                                                Value="{Binding Inspector.ShadowBlur}"/>
+                                                                <controls:PrecisionParameterRow Label="Pos X" Minimum="-600" Maximum="600" DefaultValue="0" Step="2" Decimals="0" Unit="px"
+                                                                                                Value="{Binding Inspector.PositionX}"
+                                                                                                ShowKeyframeControls="True"
+                                                                                                KeyframeDiamondIcon="{Binding Inspector.PositionDiamondIcon}"
+                                                                                                PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                                                ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                                                NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                                                KeyframeParameter="Position"/>
+
+                                                                <controls:PrecisionParameterRow Label="Pos Y" Minimum="-400" Maximum="400" DefaultValue="0" Step="2" Decimals="0" Unit="px"
+                                                                                                Value="{Binding Inspector.PositionY}"/>
+
+                                                                <controls:PrecisionParameterRow Label="Rotation" Minimum="-180" Maximum="180" DefaultValue="0" Step="0.5" Decimals="1" Unit="°"
+                                                                                                Value="{Binding Inspector.Rotation}"
+                                                                                                ShowKeyframeControls="True"
+                                                                                                KeyframeDiamondIcon="{Binding Inspector.RotationDiamondIcon}"
+                                                                                                PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                                                ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                                                NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                                                KeyframeParameter="Rotation"/>
+
+                                                                <controls:PrecisionParameterRow Label="Opacity %" Minimum="0" Maximum="100" DefaultValue="100" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.OpacityPercent}"
+                                                                                                ShowKeyframeControls="True"
+                                                                                                KeyframeDiamondIcon="{Binding Inspector.OpacityDiamondIcon}"
+                                                                                                PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                                                ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                                                NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                                                KeyframeParameter="Opacity"/>
+
+                                                                <Grid ColumnDefinitions="95,*" Margin="0,4,0,2">
+                                                                    <TextBlock Grid.Column="0" Text="Blend Mode" VerticalAlignment="Center" FontSize="11" Foreground="#FF9A9AA6"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.BlendModeOptions}"
+                                                                              SelectedItem="{Binding Inspector.SelectedBlendMode}" HorizontalAlignment="Stretch"/>
+                                                                </Grid>
+
+                                                                <WrapPanel Margin="0,4,0,0">
+                                                                    <CheckBox Content="Flip H" IsChecked="{Binding Inspector.FlipHorizontal}" FontSize="10" Margin="0,0,8,0"/>
+                                                                    <CheckBox Content="Flip V" IsChecked="{Binding Inspector.FlipVertical}" FontSize="10" Margin="0,0,8,0"/>
+                                                                    <CheckBox Content="Drop Shadow" IsChecked="{Binding Inspector.DropShadowEnabled}" FontSize="10" Margin="0,0,8,0"/>
+                                                                    <CheckBox Content="Remove BG" IsChecked="{Binding Inspector.SubjectMatteEnabled}" FontSize="10"/>
+                                                                </WrapPanel>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- Accordion Card: CROP & CORNERS -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                                <Button Grid.Column="0" Content="{Binding Inspector.CropArrow}"
+                                                                        Command="{Binding Inspector.ToggleSectionCommand}" CommandParameter="Crop"
+                                                                        Background="Transparent" BorderThickness="0" Padding="0" Margin="0,0,6,0"
+                                                                        Foreground="#FF9A9AA6" FontSize="10" Width="14"/>
+                                                                <TextBlock Grid.Column="1" Text="CROP &amp; CORNERS" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="2" Content="↺" Command="{Binding Inspector.ResetSectionCommand}" CommandParameter="Crop"
+                                                                        Background="Transparent" BorderThickness="0" Padding="3,0" Foreground="#FF9A9AA6" FontSize="11" ToolTip.Tip="Reset Crop"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.IsCropExpanded}">
+                                                            <StackPanel Spacing="2">
+                                                                <controls:PrecisionParameterRow Label="Crop Left %" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.CropLeft}"
+                                                                                                ShowKeyframeControls="True"
+                                                                                                KeyframeDiamondIcon="{Binding Inspector.CropLeftDiamondIcon}"
+                                                                                                PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                                                ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                                                NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                                                KeyframeParameter="CropLeft"/>
+
+                                                                <controls:PrecisionParameterRow Label="Crop Right %" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.CropRight}"
+                                                                                                ShowKeyframeControls="True"
+                                                                                                KeyframeDiamondIcon="{Binding Inspector.CropRightDiamondIcon}"
+                                                                                                PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                                                ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                                                NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                                                KeyframeParameter="CropRight"/>
+
+                                                                <controls:PrecisionParameterRow Label="Crop Top %" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.CropTop}"
+                                                                                                ShowKeyframeControls="True"
+                                                                                                KeyframeDiamondIcon="{Binding Inspector.CropTopDiamondIcon}"
+                                                                                                PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                                                ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                                                NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                                                KeyframeParameter="CropTop"/>
+
+                                                                <controls:PrecisionParameterRow Label="Crop Bot %" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.CropBottom}"
+                                                                                                ShowKeyframeControls="True"
+                                                                                                KeyframeDiamondIcon="{Binding Inspector.CropBottomDiamondIcon}"
+                                                                                                PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                                                ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                                                NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                                                KeyframeParameter="CropBottom"/>
+
+                                                                <controls:PrecisionParameterRow Label="Corner Radius" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="px"
+                                                                                                Value="{Binding Inspector.CornerRadius}"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- Accordion Card: BEZIER & SHAPE MASKING -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                                <Button Grid.Column="0" Content="{Binding Inspector.MaskArrow}"
+                                                                        Command="{Binding Inspector.ToggleSectionCommand}" CommandParameter="Mask"
+                                                                        Background="Transparent" BorderThickness="0" Padding="0" Margin="0,0,6,0"
+                                                                        Foreground="#FF9A9AA6" FontSize="10" Width="14"/>
+                                                                <TextBlock Grid.Column="1" Text="MASK &amp; BEZIER FEATHER" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="2" Content="↺" Command="{Binding Inspector.ResetSectionCommand}" CommandParameter="Mask"
+                                                                        Background="Transparent" BorderThickness="0" Padding="3,0" Foreground="#FF9A9AA6" FontSize="11" ToolTip.Tip="Reset Mask"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.IsMaskExpanded}">
+                                                            <StackPanel Spacing="3">
+                                                                <WrapPanel Margin="0,0,0,2">
+                                                                    <CheckBox Content="Enable Mask" IsChecked="{Binding Inspector.MaskEnabled}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,12,0"/>
+                                                                    <CheckBox Content="Invert Mask" IsChecked="{Binding Inspector.InvertMask}" FontSize="10.5"/>
+                                                                </WrapPanel>
+
+                                                                <Grid ColumnDefinitions="95,*" Margin="0,2,0,2">
+                                                                    <TextBlock Grid.Column="0" Text="Mask Shape" VerticalAlignment="Center" FontSize="11" Foreground="#FF9A9AA6"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.MaskShapePresets}"
+                                                                              SelectedItem="{Binding Inspector.SelectedMaskShapePreset}" HorizontalAlignment="Stretch"/>
+                                                                </Grid>
+
+                                                                <controls:PrecisionParameterRow Label="Feather" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="px"
+                                                                                                Value="{Binding Inspector.MaskFeather}"/>
+
+                                                                <controls:PrecisionParameterRow Label="Mask Opacity" Minimum="0" Maximum="100" DefaultValue="100" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.MaskOpacity}"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
                                             </StackPanel>
+                                        </ScrollViewer>
+                                    </TabItem>
 
-                                            <WrapPanel Margin="0,1,0,0">
-                                                <CheckBox Content="Outline Stroke" IsChecked="{Binding Inspector.StrokeEnabled}" FontSize="10" Margin="0,0,8,0"/>
-                                                <CheckBox Content="Drop Shadow" IsChecked="{Binding Inspector.ShadowEnabled}" FontSize="10" Margin="0,0,8,0"/>
-                                                <CheckBox Content="Backplate Box" IsChecked="{Binding Inspector.BackgroundBoxEnabled}" FontSize="10"/>
-                                            </WrapPanel>
+                                    <!-- SUB-TAB 1: COLOR & CURVES -->
+                                    <TabItem Header="🎨 Color" FontSize="11" Padding="8,4">
+                                        <ScrollViewer Margin="0,4,0,0">
+                                            <StackPanel Spacing="6" IsEnabled="{Binding Inspector.HasSelectedClip}">
 
-                                            <!-- Text Color, Background Box, Alignment & 9-Point Position Grid -->
-                                            <Grid ColumnDefinitions="Auto,*" Margin="0,2,0,0">
-                                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
-                                                    <Button Content="W" Background="#FFFFFFFF" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FFFFFFFF" Padding="5,1" FontSize="9.5"/>
-                                                    <Button Content="Y" Background="#FFFACC15" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FFFACC15" Padding="5,1" FontSize="9.5"/>
-                                                    <Button Content="C" Background="#FF38BDF8" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FF38BDF8" Padding="5,1" FontSize="9.5"/>
-                                                    <Button Content="G" Background="#FF4ADE80" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FF4ADE80" Padding="5,1" FontSize="9.5"/>
-                                                </StackPanel>
-                                                <TextBox Grid.Column="1" Text="{Binding Inspector.TextColorHex}" Margin="4,0,0,0" ToolTip.Tip="Fill Color Hex"/>
-                                            </Grid>
+                                                <!-- Accordion Card: BASIC COLOR -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                                <Button Grid.Column="0" Content="{Binding Inspector.BasicColorArrow}"
+                                                                        Command="{Binding Inspector.ToggleSectionCommand}" CommandParameter="BasicColor"
+                                                                        Background="Transparent" BorderThickness="0" Padding="0" Margin="0,0,6,0"
+                                                                        Foreground="#FF9A9AA6" FontSize="10" Width="14"/>
+                                                                <TextBlock Grid.Column="1" Text="BASIC COLOR &amp; TONE" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="2" Content="↺" Command="{Binding Inspector.ResetSectionCommand}" CommandParameter="BasicColor"
+                                                                        Background="Transparent" BorderThickness="0" Padding="3,0" Foreground="#FF9A9AA6" FontSize="11" ToolTip.Tip="Reset Basic Color"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.IsBasicColorExpanded}">
+                                                            <StackPanel Spacing="2">
+                                                                <!-- Creative Look Presets -->
+                                                                <WrapPanel Margin="0,0,0,4">
+                                                                    <Button Content="Rec.709 Reset" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Rec.709 Reset" Padding="5,2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Teal &amp; Orange" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Teal &amp; Orange" Padding="5,2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Moody Matte" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Moody Matte" Padding="5,2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Golden Hour" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Golden Hour" Padding="5,2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Cyberpunk" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Cyberpunk" Padding="5,2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Kodak 2383" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Kodak 2383" Padding="5,2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Noir B&amp;W" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Noir B&amp;W" Padding="5,2" FontSize="9" Margin="1"/>
+                                                                </WrapPanel>
 
-                                            <Grid ColumnDefinitions="*,Auto" Margin="0,2,0,0">
-                                                <StackPanel Grid.Column="0" Spacing="3" Margin="0,0,6,0">
-                                                    <Grid ColumnDefinitions="64,*">
-                                                        <TextBlock Grid.Column="0" Text="Alignment" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
-                                                        <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TextAlignments}"
-                                                                  SelectedItem="{Binding Inspector.SelectedTextAlignment}" HorizontalAlignment="Stretch"/>
-                                                    </Grid>
-                                                    <Grid ColumnDefinitions="64,*">
-                                                        <TextBlock Grid.Column="0" Text="Animation" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
-                                                        <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TextAnimations}"
-                                                                  SelectedItem="{Binding Inspector.SelectedTextAnimation}" HorizontalAlignment="Stretch"/>
-                                                    </Grid>
-                                                </StackPanel>
+                                                                <!-- 3D LUT (.cube) Importer & 16-Bit HDR Pipeline -->
+                                                                <Border Background="#FF141519" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="6,4" Margin="0,0,0,4">
+                                                                    <StackPanel Spacing="3">
+                                                                        <Grid ColumnDefinitions="*,Auto,Auto">
+                                                                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                                                <TextBlock Text="3D LUT:" Foreground="#FF9CA3AF" FontSize="10" FontWeight="SemiBold"/>
+                                                                                <TextBlock Text="{Binding Inspector.LutDisplayName}" Foreground="#FF38BDF8" FontSize="10"
+                                                                                           FontFamily="Cascadia Mono, Consolas, Monospace" TextTrimming="CharacterEllipsis" MaxWidth="135"/>
+                                                                            </StackPanel>
+                                                                            <Button Grid.Column="1" Content="Load .cube..." Click="OnBrowseLutFileClick" Padding="6,2" FontSize="9.5" Margin="0,0,3,0"/>
+                                                                            <Button Grid.Column="2" Content="Clear" Command="{Binding Inspector.ClearLutCommand}" Padding="5,2" FontSize="9.5"/>
+                                                                        </Grid>
+                                                                        <controls:PrecisionParameterRow Label="LUT Mix %" Minimum="0" Maximum="100" DefaultValue="100" Step="1" Decimals="0" Unit="%"
+                                                                                                        Value="{Binding Inspector.LutIntensity}"/>
+                                                                        <CheckBox Content="16-Bit Half-Float Color Pipeline (Anti-Banding HDR)"
+                                                                                  IsChecked="{Binding Inspector.Enable16BitColorPipeline}" FontSize="9.5" Foreground="#FF9CA3AF"/>
+                                                                    </StackPanel>
+                                                                </Border>
 
-                                                <!-- 9-Point Quick Snap Grid -->
-                                                <UniformGrid Grid.Column="1" Rows="3" Columns="3" Width="66" Height="54">
-                                                    <Button Content="↖" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="TopLeft" Padding="1" FontSize="8"/>
-                                                    <Button Content="↑" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="TopCenter" Padding="1" FontSize="8"/>
-                                                    <Button Content="↗" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="TopRight" Padding="1" FontSize="8"/>
-                                                    <Button Content="←" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="MiddleLeft" Padding="1" FontSize="8"/>
-                                                    <Button Content="•" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="Center" Padding="1" FontSize="8"/>
-                                                    <Button Content="→" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="MiddleRight" Padding="1" FontSize="8"/>
-                                                    <Button Content="↙" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="BottomLeft" Padding="1" FontSize="8"/>
-                                                    <Button Content="↓" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="BottomCenter" Padding="1" FontSize="8"/>
-                                                    <Button Content="↘" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="BottomRight" Padding="1" FontSize="8"/>
-                                                </UniformGrid>
-                                            </Grid>
-                                        </StackPanel>
-                                    </Border>
+                                                                <controls:PrecisionParameterRow Label="Exposure" Minimum="-4.0" Maximum="4.0" DefaultValue="0.0" Step="0.05" Decimals="2" Unit=" EV"
+                                                                                                Value="{Binding Inspector.Exposure}"/>
+                                                                <controls:PrecisionParameterRow Label="Contrast" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.Contrast}"/>
+                                                                <controls:PrecisionParameterRow Label="Highlights" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.Highlights}"/>
+                                                                <controls:PrecisionParameterRow Label="Shadows" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.Shadows}"/>
+                                                                <controls:PrecisionParameterRow Label="Whites" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.Whites}"/>
+                                                                <controls:PrecisionParameterRow Label="Blacks" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.Blacks}"/>
+                                                                <controls:PrecisionParameterRow Label="Brightness" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.Brightness}"/>
+                                                                <controls:PrecisionParameterRow Label="Temperature" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.Temperature}"/>
+                                                                <controls:PrecisionParameterRow Label="Tint" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.Tint}"/>
+                                                                <controls:PrecisionParameterRow Label="Saturation" Minimum="0" Maximum="200" DefaultValue="100" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.Saturation}"/>
+                                                                <controls:PrecisionParameterRow Label="Vibrance" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.Vibrance}"/>
+                                                                <controls:PrecisionParameterRow Label="Vignette" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.Vignette}"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
 
-                                    <!-- TRANSFORM & CROP (PrecisionParameterRow + ScrubbableNumberBox + Keyframe Stepper + Reset ↺) -->
-                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8"
-                                            IsEnabled="{Binding Inspector.HasSelectedClip}">
-                                        <StackPanel Spacing="2">
-                                            <TextBlock Text="TRANSFORM &amp; CROP" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5"/>
+                                                <!-- Accordion Card: RGB & MASTER CURVES -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                                <Button Grid.Column="0" Content="{Binding Inspector.CurvesArrow}"
+                                                                        Command="{Binding Inspector.ToggleSectionCommand}" CommandParameter="Curves"
+                                                                        Background="Transparent" BorderThickness="0" Padding="0" Margin="0,0,6,0"
+                                                                        Foreground="#FF9A9AA6" FontSize="10" Width="14"/>
+                                                                <TextBlock Grid.Column="1" Text="RGB &amp; MASTER CURVES" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="2" Content="↺" Command="{Binding Inspector.ResetSectionCommand}" CommandParameter="Curves"
+                                                                        Background="Transparent" BorderThickness="0" Padding="3,0" Foreground="#FF9A9AA6" FontSize="11" ToolTip.Tip="Reset Curves"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.IsCurvesExpanded}">
+                                                            <StackPanel Spacing="4" HorizontalAlignment="Center">
+                                                                <!-- Proportional 240x240 Curve Box with Fritsch-Carlson Spline & Correct Y-Inversion -->
+                                                                <controls:CurveEditorControl x:Name="InspectorCurveEditor" Width="240" Height="240" Margin="0,2,0,2"/>
+                                                                <TextBlock Text="Click curve to add node • Drag to bend • Right-click node to delete"
+                                                                           Foreground="#FF8B92A5" FontSize="9" HorizontalAlignment="Center"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
 
-                                            <controls:PrecisionParameterRow Label="Scale %" Minimum="10" Maximum="400" DefaultValue="100" Step="1" Decimals="1" Unit="%"
-                                                                            Value="{Binding Inspector.ScalePercent}"
-                                                                            ShowKeyframeControls="True"
-                                                                            KeyframeDiamondIcon="{Binding Inspector.ScaleDiamondIcon}"
-                                                                            PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
-                                                                            ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
-                                                                            NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
-                                                                            KeyframeParameter="Scale"/>
+                                                <!-- Accordion Card: COLOR WHEELS & SCOPES -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                                <Button Grid.Column="0" Content="{Binding Inspector.ColorWheelsArrow}"
+                                                                        Command="{Binding Inspector.ToggleSectionCommand}" CommandParameter="ColorWheels"
+                                                                        Background="Transparent" BorderThickness="0" Padding="0" Margin="0,0,6,0"
+                                                                        Foreground="#FF9A9AA6" FontSize="10" Width="14"/>
+                                                                <TextBlock Grid.Column="1" Text="COLOR WHEELS &amp; SCOPES" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="2" Content="↺" Command="{Binding Inspector.ResetSectionCommand}" CommandParameter="ColorWheels"
+                                                                        Background="Transparent" BorderThickness="0" Padding="3,0" Foreground="#FF9A9AA6" FontSize="11" ToolTip.Tip="Reset Wheels"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.IsColorWheelsExpanded}">
+                                                            <StackPanel Spacing="4">
+                                                                <!-- Multi-Mode Video Scope (RGB Parade, Vectorscope, Luma Waveform, Histogram) -->
+                                                                <controls:VideoScopeControl x:Name="InspectorVideoScope" Height="140"/>
 
-                                            <controls:PrecisionParameterRow Label="Pos X" Minimum="-600" Maximum="600" DefaultValue="0" Step="2" Decimals="0" Unit="px"
-                                                                            Value="{Binding Inspector.PositionX}"
-                                                                            ShowKeyframeControls="True"
-                                                                            KeyframeDiamondIcon="{Binding Inspector.PositionDiamondIcon}"
-                                                                            PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
-                                                                            ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
-                                                                            NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
-                                                                            KeyframeParameter="Position"/>
+                                                                <!-- 3-Way Color Wheels (Lift, Gamma, Gain) -->
+                                                                <controls:ColorWheelControl
+                                                                    LiftRed="{Binding Inspector.LiftWheelRed}"
+                                                                    LiftGreen="{Binding Inspector.LiftWheelGreen}"
+                                                                    LiftBlue="{Binding Inspector.LiftWheelBlue}"
+                                                                    LiftLum="{Binding Inspector.LiftWheelLum}"
+                                                                    GammaRed="{Binding Inspector.GammaWheelRed}"
+                                                                    GammaGreen="{Binding Inspector.GammaWheelGreen}"
+                                                                    GammaBlue="{Binding Inspector.GammaWheelBlue}"
+                                                                    GammaLum="{Binding Inspector.GammaWheelLum}"
+                                                                    GainRed="{Binding Inspector.GainWheelRed}"
+                                                                    GainGreen="{Binding Inspector.GainWheelGreen}"
+                                                                    GainBlue="{Binding Inspector.GainWheelBlue}"
+                                                                    GainLum="{Binding Inspector.GainWheelLum}"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
 
-                                            <controls:PrecisionParameterRow Label="Pos Y" Minimum="-400" Maximum="400" DefaultValue="0" Step="2" Decimals="0" Unit="px"
-                                                                            Value="{Binding Inspector.PositionY}"/>
-
-                                            <controls:PrecisionParameterRow Label="Rotation" Minimum="-180" Maximum="180" DefaultValue="0" Step="0.5" Decimals="1" Unit="°"
-                                                                            Value="{Binding Inspector.Rotation}"
-                                                                            ShowKeyframeControls="True"
-                                                                            KeyframeDiamondIcon="{Binding Inspector.RotationDiamondIcon}"
-                                                                            PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
-                                                                            ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
-                                                                            NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
-                                                                            KeyframeParameter="Rotation"/>
-
-                                            <controls:PrecisionParameterRow Label="Opacity %" Minimum="0" Maximum="100" DefaultValue="100" Step="1" Decimals="0" Unit="%"
-                                                                            Value="{Binding Inspector.OpacityPercent}"
-                                                                            ShowKeyframeControls="True"
-                                                                            KeyframeDiamondIcon="{Binding Inspector.OpacityDiamondIcon}"
-                                                                            PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
-                                                                            ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
-                                                                            NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
-                                                                            KeyframeParameter="Opacity"/>
-
-                                            <controls:PrecisionParameterRow Label="Crop L %" Minimum="0" Maximum="45" DefaultValue="0" Step="0.5" Decimals="0" Unit="%"
-                                                                            Value="{Binding Inspector.CropLeft}"/>
-
-                                            <controls:PrecisionParameterRow Label="Crop R %" Minimum="0" Maximum="45" DefaultValue="0" Step="0.5" Decimals="0" Unit="%"
-                                                                            Value="{Binding Inspector.CropRight}"/>
-
-                                            <controls:PrecisionParameterRow Label="Crop Top %" Minimum="0" Maximum="45" DefaultValue="0" Step="0.5" Decimals="0" Unit="%"
-                                                                            Value="{Binding Inspector.CropTop}"/>
-
-                                            <controls:PrecisionParameterRow Label="Crop Bot %" Minimum="0" Maximum="45" DefaultValue="0" Step="0.5" Decimals="0" Unit="%"
-                                                                            Value="{Binding Inspector.CropBottom}"/>
-
-                                            <WrapPanel Margin="0,3,0,0">
-                                                <CheckBox Content="Flip H" IsChecked="{Binding Inspector.FlipHorizontal}" FontSize="10" Margin="0,0,8,0"/>
-                                                <CheckBox Content="Flip V" IsChecked="{Binding Inspector.FlipVertical}" FontSize="10" Margin="0,0,8,0"/>
-                                                <CheckBox Content="Drop Shadow" IsChecked="{Binding Inspector.DropShadowEnabled}" FontSize="10" Margin="0,0,8,0"/>
-                                                <CheckBox Content="Remove Background" IsChecked="{Binding Inspector.SubjectMatteEnabled}" FontSize="10"/>
-                                            </WrapPanel>
-                                        </StackPanel>
-                                    </Border>
-
-                                    <!-- COLOR GRADING SUITE (Section 3: Live RGB Scope + 3-Way Color Wheels + Normalized Rec.709 Matrix) -->
-                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8"
-                                            IsEnabled="{Binding Inspector.HasSelectedClip}">
-                                        <StackPanel Spacing="4">
-                                            <Grid ColumnDefinitions="*,Auto">
-                                                <TextBlock Grid.Column="0" Text="COLOR GRADING &amp; SCOPES (REC.709)" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
-                                                <Button Grid.Column="1" Content="Reset Color" Command="{Binding Inspector.ResetColorGradingCommand}" Padding="6,1" FontSize="9.5"/>
-                                            </Grid>
-
-                                            <!-- Live RGB Histogram / Luma Waveform Scope -->
-                                            <controls:VideoScopeControl x:Name="InspectorVideoScope"/>
-
-                                            <!-- 7 Creative Look Preset Pills -->
-                                            <WrapPanel>
-                                                <Button Content="Rec.709 Reset" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Rec.709 Reset" Padding="5,2" FontSize="9" Margin="1"/>
-                                                <Button Content="Teal &amp; Orange" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Teal &amp; Orange" Padding="5,2" FontSize="9" Margin="1"/>
-                                                <Button Content="Moody Matte" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Moody Matte" Padding="5,2" FontSize="9" Margin="1"/>
-                                                <Button Content="Golden Hour" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Golden Hour" Padding="5,2" FontSize="9" Margin="1"/>
-                                                <Button Content="Cyberpunk" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Cyberpunk" Padding="5,2" FontSize="9" Margin="1"/>
-                                                <Button Content="Kodak 2383" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Kodak 2383" Padding="5,2" FontSize="9" Margin="1"/>
-                                                <Button Content="Noir B&amp;W" Command="{Binding Inspector.ApplyColorPresetCommand}" CommandParameter="Noir B&amp;W" Padding="5,2" FontSize="9" Margin="1"/>
-                                            </WrapPanel>
-
-                                            <!-- 3-Way Color Wheels (Lift, Gamma, Gain) -->
-                                            <controls:ColorWheelControl
-                                                LiftRed="{Binding Inspector.LiftWheelRed}"
-                                                LiftGreen="{Binding Inspector.LiftWheelGreen}"
-                                                LiftBlue="{Binding Inspector.LiftWheelBlue}"
-                                                LiftLum="{Binding Inspector.LiftWheelLum}"
-                                                GammaRed="{Binding Inspector.GammaWheelRed}"
-                                                GammaGreen="{Binding Inspector.GammaWheelGreen}"
-                                                GammaBlue="{Binding Inspector.GammaWheelBlue}"
-                                                GammaLum="{Binding Inspector.GammaWheelLum}"
-                                                GainRed="{Binding Inspector.GainWheelRed}"
-                                                GainGreen="{Binding Inspector.GainWheelGreen}"
-                                                GainBlue="{Binding Inspector.GainWheelBlue}"
-                                                GainLum="{Binding Inspector.GainWheelLum}"/>
-
-                                            <TextBlock Text="Light &amp; Tone (Normalized Mid-Gray Pivot)" FontWeight="SemiBold" Foreground="#FF9CA3AF" FontSize="9.5" Margin="0,2,0,0"/>
-                                            <StackPanel Spacing="1">
-                                                <controls:PrecisionParameterRow Label="Exposure" Minimum="-4.0" Maximum="4.0" DefaultValue="0.0" Step="0.05" Decimals="2" Unit=" EV"
-                                                                                Value="{Binding Inspector.Exposure}"/>
-                                                <controls:PrecisionParameterRow Label="Contrast" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
-                                                                                Value="{Binding Inspector.Contrast}"/>
-                                                <controls:PrecisionParameterRow Label="Highlights" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
-                                                                                Value="{Binding Inspector.Highlights}"/>
-                                                <controls:PrecisionParameterRow Label="Shadows" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
-                                                                                Value="{Binding Inspector.Shadows}"/>
-                                                <controls:PrecisionParameterRow Label="Brightness" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
-                                                                                Value="{Binding Inspector.Brightness}"/>
+                                                <!-- Accordion Card: HSL SECONDARY -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                                <Button Grid.Column="0" Content="{Binding Inspector.HslArrow}"
+                                                                        Command="{Binding Inspector.ToggleSectionCommand}" CommandParameter="Hsl"
+                                                                        Background="Transparent" BorderThickness="0" Padding="0" Margin="0,0,6,0"
+                                                                        Foreground="#FF9A9AA6" FontSize="10" Width="14"/>
+                                                                <TextBlock Grid.Column="1" Text="HSL SECONDARY (8 HUE RANGES)" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="2" Content="↺" Command="{Binding Inspector.ResetSectionCommand}" CommandParameter="Hsl"
+                                                                        Background="Transparent" BorderThickness="0" Padding="3,0" Foreground="#FF9A9AA6" FontSize="11" ToolTip.Tip="Reset HSL"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.IsHslExpanded}">
+                                                            <StackPanel Spacing="3">
+                                                                <UniformGrid Rows="2" Columns="4" Margin="0,1,0,3">
+                                                                    <Button Content="Red" Command="{Binding Inspector.SelectHslChannelCommand}" CommandParameter="0" Padding="2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Orange" Command="{Binding Inspector.SelectHslChannelCommand}" CommandParameter="1" Padding="2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Yellow" Command="{Binding Inspector.SelectHslChannelCommand}" CommandParameter="2" Padding="2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Green" Command="{Binding Inspector.SelectHslChannelCommand}" CommandParameter="3" Padding="2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Aqua" Command="{Binding Inspector.SelectHslChannelCommand}" CommandParameter="4" Padding="2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Blue" Command="{Binding Inspector.SelectHslChannelCommand}" CommandParameter="5" Padding="2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Purple" Command="{Binding Inspector.SelectHslChannelCommand}" CommandParameter="6" Padding="2" FontSize="9" Margin="1"/>
+                                                                    <Button Content="Magenta" Command="{Binding Inspector.SelectHslChannelCommand}" CommandParameter="7" Padding="2" FontSize="9" Margin="1"/>
+                                                                </UniformGrid>
+                                                                <TextBlock Text="{Binding Inspector.SelectedHslChannelName, StringFormat='Active Range: {0}'}" Foreground="#FF38BDF8" FontSize="10" FontWeight="SemiBold"/>
+                                                                <controls:PrecisionParameterRow Label="Hue Shift" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.ActiveHslHue}"/>
+                                                                <controls:PrecisionParameterRow Label="Saturation" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.ActiveHslSat}"/>
+                                                                <controls:PrecisionParameterRow Label="Luminance" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
+                                                                                                Value="{Binding Inspector.ActiveHslLum}"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
                                             </StackPanel>
+                                        </ScrollViewer>
+                                    </TabItem>
 
-                                            <TextBlock Text="Color &amp; White Balance" FontWeight="SemiBold" Foreground="#FF9CA3AF" FontSize="9.5" Margin="0,2,0,0"/>
-                                            <StackPanel Spacing="1">
-                                                <controls:PrecisionParameterRow Label="Temperature" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
-                                                                                Value="{Binding Inspector.Temperature}"/>
-                                                <controls:PrecisionParameterRow Label="Tint" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
-                                                                                Value="{Binding Inspector.Tint}"/>
-                                                <controls:PrecisionParameterRow Label="Saturation" Minimum="0" Maximum="200" DefaultValue="100" Step="1" Decimals="0" Unit="%"
-                                                                                Value="{Binding Inspector.Saturation}"/>
-                                                <controls:PrecisionParameterRow Label="Vibrance" Minimum="-100" Maximum="100" DefaultValue="0" Step="1" Decimals="0"
-                                                                                Value="{Binding Inspector.Vibrance}"/>
-                                                <controls:PrecisionParameterRow Label="Vignette" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
-                                                                                Value="{Binding Inspector.Vignette}"/>
+                                    <!-- SUB-TAB 2: TEXT STUDIO -->
+                                    <TabItem Header="📝 Text" FontSize="11" Padding="8,4">
+                                        <ScrollViewer Margin="0,4,0,0">
+                                            <StackPanel Spacing="6">
+
+                                                <!-- Accordion Card: TEXT & TYPOGRAPHY STUDIO -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                                <Button Grid.Column="0" Content="{Binding Inspector.TextArrow}"
+                                                                        Command="{Binding Inspector.ToggleSectionCommand}" CommandParameter="Text"
+                                                                        Background="Transparent" BorderThickness="0" Padding="0" Margin="0,0,6,0"
+                                                                        Foreground="#FF9A9AA6" FontSize="10" Width="14"/>
+                                                                <TextBlock Grid.Column="1" Text="TEXT &amp; TYPOGRAPHY STUDIO" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="2" Content="↺" Command="{Binding Inspector.ResetSectionCommand}" CommandParameter="Text"
+                                                                        Background="Transparent" BorderThickness="0" Padding="3,0" Foreground="#FF9A9AA6" FontSize="11" ToolTip.Tip="Reset Text"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.IsTextExpanded}">
+                                                            <StackPanel Spacing="4">
+                                                                <TextBox x:Name="InspectorSubtitleTextBox"
+                                                                         Text="{Binding Inspector.SubtitleText}"
+                                                                         AcceptsReturn="True" Height="48"
+                                                                         Watermark="Type title or subtitle text..."/>
+
+                                                                <Grid ColumnDefinitions="*,100" Margin="0,2,0,0">
+                                                                    <ComboBox Grid.Column="0" ItemsSource="{Binding Inspector.SystemFontFamilies}"
+                                                                              SelectedItem="{Binding Inspector.SelectedFontFamily}"
+                                                                              HorizontalAlignment="Stretch" Margin="0,0,4,0" ToolTip.Tip="Font Family"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.FontWeightStyles}"
+                                                                              SelectedItem="{Binding Inspector.SelectedFontWeightStyle}"
+                                                                              HorizontalAlignment="Stretch" ToolTip.Tip="Font Weight / Style"/>
+                                                                </Grid>
+
+                                                                <controls:PrecisionParameterRow Label="Font Size" Minimum="10" Maximum="200" DefaultValue="48" Step="1" Decimals="0" Unit="pt"
+                                                                                                Value="{Binding Inspector.FontSize}"/>
+                                                                <controls:PrecisionParameterRow Label="Spacing" Minimum="-20" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="px"
+                                                                                                Value="{Binding Inspector.LetterSpacing}"/>
+                                                                <controls:PrecisionParameterRow Label="Line Height" Minimum="0.5" Maximum="3.0" DefaultValue="1.2" Step="0.05" Decimals="2" Unit="x"
+                                                                                                Value="{Binding Inspector.LineHeight}"/>
+                                                                <controls:PrecisionParameterRow Label="Stroke W" Minimum="0" Maximum="20" DefaultValue="3" Step="0.5" Decimals="1" Unit="px"
+                                                                                                Value="{Binding Inspector.StrokeWidth}"/>
+                                                                <controls:PrecisionParameterRow Label="Shadow Blur" Minimum="0" Maximum="30" DefaultValue="6" Step="0.5" Decimals="1" Unit="px"
+                                                                                                Value="{Binding Inspector.ShadowBlur}"/>
+
+                                                                <WrapPanel Margin="0,2,0,0">
+                                                                    <CheckBox Content="Outline Stroke" IsChecked="{Binding Inspector.StrokeEnabled}" FontSize="10" Margin="0,0,8,0"/>
+                                                                    <CheckBox Content="Drop Shadow" IsChecked="{Binding Inspector.ShadowEnabled}" FontSize="10" Margin="0,0,8,0"/>
+                                                                    <CheckBox Content="Show Background Box" IsChecked="{Binding Inspector.BackgroundBoxEnabled}" FontSize="10"/>
+                                                                </WrapPanel>
+
+                                                                <StackPanel IsVisible="{Binding Inspector.BackgroundBoxEnabled}" Spacing="2" Margin="0,2,0,0">
+                                                                    <controls:PrecisionParameterRow Label="Box Opacity %" Minimum="0" Maximum="100" DefaultValue="80" Step="5" Decimals="0" Unit="%"
+                                                                                                    Value="{Binding Inspector.BackgroundOpacity}"/>
+                                                                    <controls:PrecisionParameterRow Label="Box Padding" Minimum="0" Maximum="60" DefaultValue="16" Step="1" Decimals="0" Unit="px"
+                                                                                                    Value="{Binding Inspector.BoxPadding}"/>
+                                                                    <controls:PrecisionParameterRow Label="Box Radius" Minimum="0" Maximum="40" DefaultValue="8" Step="1" Decimals="0" Unit="px"
+                                                                                                    Value="{Binding Inspector.BoxCornerRadius}"/>
+                                                                </StackPanel>
+
+                                                                <!-- Text Color Swatches & Hex -->
+                                                                <Grid ColumnDefinitions="Auto,*" Margin="0,3,0,0">
+                                                                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                                                                        <Button Content="W" Background="#FFFFFFFF" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FFFFFFFF" Padding="5,1" FontSize="9.5"/>
+                                                                        <Button Content="Y" Background="#FFFACC15" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FFFACC15" Padding="5,1" FontSize="9.5"/>
+                                                                        <Button Content="C" Background="#FF38BDF8" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FF38BDF8" Padding="5,1" FontSize="9.5"/>
+                                                                        <Button Content="G" Background="#FF4ADE80" Foreground="#FF111215" Command="{Binding Inspector.SetTextFillColorCommand}" CommandParameter="#FF4ADE80" Padding="5,1" FontSize="9.5"/>
+                                                                    </StackPanel>
+                                                                    <TextBox Grid.Column="1" Text="{Binding Inspector.TextColorHex}" Margin="4,0,0,0" ToolTip.Tip="Fill Color Hex"/>
+                                                                </Grid>
+
+                                                                <!-- Alignment & 9-Point Quick Snap Grid -->
+                                                                <Grid ColumnDefinitions="*,Auto" Margin="0,3,0,0">
+                                                                    <StackPanel Grid.Column="0" Spacing="3" Margin="0,0,6,0">
+                                                                        <Grid ColumnDefinitions="64,*">
+                                                                            <TextBlock Grid.Column="0" Text="Alignment" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                                            <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TextAlignments}"
+                                                                                      SelectedItem="{Binding Inspector.SelectedTextAlignment}" HorizontalAlignment="Stretch"/>
+                                                                        </Grid>
+                                                                        <Grid ColumnDefinitions="64,*">
+                                                                            <TextBlock Grid.Column="0" Text="Animation" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                                            <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TextAnimations}"
+                                                                                      SelectedItem="{Binding Inspector.SelectedTextAnimation}" HorizontalAlignment="Stretch"/>
+                                                                        </Grid>
+                                                                    </StackPanel>
+
+                                                                    <UniformGrid Grid.Column="1" Rows="3" Columns="3" Width="66" Height="54">
+                                                                        <Button Content="↖" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="TopLeft" Padding="1" FontSize="8"/>
+                                                                        <Button Content="↑" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="TopCenter" Padding="1" FontSize="8"/>
+                                                                        <Button Content="↗" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="TopRight" Padding="1" FontSize="8"/>
+                                                                        <Button Content="←" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="MiddleLeft" Padding="1" FontSize="8"/>
+                                                                        <Button Content="•" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="Center" Padding="1" FontSize="8"/>
+                                                                        <Button Content="→" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="MiddleRight" Padding="1" FontSize="8"/>
+                                                                        <Button Content="↙" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="BottomLeft" Padding="1" FontSize="8"/>
+                                                                        <Button Content="↓" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="BottomCenter" Padding="1" FontSize="8"/>
+                                                                        <Button Content="↘" Command="{Binding Inspector.SnapTextPositionCommand}" CommandParameter="BottomRight" Padding="1" FontSize="8"/>
+                                                                    </UniformGrid>
+                                                                </Grid>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
                                             </StackPanel>
-                                        </StackPanel>
-                                    </Border>
+                                        </ScrollViewer>
+                                    </TabItem>
 
-                                    <!-- VIDEO EFFECTS & TRANSITIONS (Section 5.1 & 5.2) -->
-                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8"
-                                            IsEnabled="{Binding Inspector.HasSelectedClip}">
-                                        <StackPanel Spacing="2">
-                                            <Grid ColumnDefinitions="*,Auto">
-                                                <TextBlock Grid.Column="0" Text="VIDEO EFFECTS &amp; TRANSITIONS" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
-                                                <Button Grid.Column="1" Content="Apply Transition to All Cuts"
-                                                        Command="{Binding Inspector.ApplyCurrentTransitionToAllClipsCommand}"
-                                                        Padding="6,1" FontSize="9.5"/>
-                                            </Grid>
+                                    <!-- SUB-TAB 3: AUDIO -->
+                                    <TabItem Header="🎧 Audio" FontSize="11" Padding="8,4">
+                                        <ScrollViewer Margin="0,4,0,0">
+                                            <StackPanel Spacing="6" IsEnabled="{Binding Inspector.HasSelectedClip}">
 
-                                            <Grid ColumnDefinitions="68,*" Margin="0,2,0,2">
-                                                <TextBlock Grid.Column="0" Text="Transition" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
-                                                <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TransitionTypes}"
-                                                          SelectedItem="{Binding Inspector.SelectedTransitionType}" HorizontalAlignment="Stretch"/>
-                                            </Grid>
+                                                <!-- Accordion Card: AUDIO EFFECTS & MIXING -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                                <Button Grid.Column="0" Content="{Binding Inspector.AudioArrow}"
+                                                                        Command="{Binding Inspector.ToggleSectionCommand}" CommandParameter="Audio"
+                                                                        Background="Transparent" BorderThickness="0" Padding="0" Margin="0,0,6,0"
+                                                                        Foreground="#FF9A9AA6" FontSize="10" Width="14"/>
+                                                                <TextBlock Grid.Column="1" Text="AUDIO EFFECTS &amp; MIXING" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="2" Content="↺" Command="{Binding Inspector.ResetSectionCommand}" CommandParameter="Audio"
+                                                                        Background="Transparent" BorderThickness="0" Padding="3,0" Foreground="#FF9A9AA6" FontSize="11" ToolTip.Tip="Reset Audio"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.IsAudioExpanded}">
+                                                            <StackPanel Spacing="2">
+                                                                <WrapPanel Margin="0,0,0,3">
+                                                                    <CheckBox Content="Clean Voice Noise" IsChecked="{Binding Inspector.DialogueIsolateEnabled}" FontSize="10" Margin="0,0,10,0"/>
+                                                                    <CheckBox Content="Compressor &amp; Limiter" IsChecked="{Binding Inspector.CompressorEnabled}" FontSize="10"/>
+                                                                </WrapPanel>
 
-                                            <controls:PrecisionParameterRow Label="Trans Dur" Minimum="0.1" Maximum="2.5" DefaultValue="0.5" Step="0.05" Decimals="2" Unit="s"
-                                                                            Value="{Binding Inspector.TransitionDuration}"/>
-                                            <controls:PrecisionParameterRow Label="Cam Shake" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
-                                                                            Value="{Binding Inspector.CameraShakeAmount}"/>
-                                            <controls:PrecisionParameterRow Label="Blur" Minimum="0" Maximum="25" DefaultValue="0" Step="0.5" Decimals="1" Unit="px"
-                                                                            Value="{Binding Inspector.GaussianBlurSigma}"/>
-                                            <controls:PrecisionParameterRow Label="RGB Split" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
-                                                                            Value="{Binding Inspector.ChromaticAberrationAmount}"/>
-                                            <controls:PrecisionParameterRow Label="Film Grain" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
-                                                                            Value="{Binding Inspector.FilmGrainAmount}"/>
-                                        </StackPanel>
-                                    </Border>
+                                                                <controls:PrecisionParameterRow Label="Vol (dB)" Minimum="-48" Maximum="12" DefaultValue="0" Step="0.5" Decimals="1" Unit=" dB"
+                                                                                                Value="{Binding Inspector.GainDb}"
+                                                                                                ShowKeyframeControls="True"
+                                                                                                KeyframeDiamondIcon="{Binding Inspector.GainDiamondIcon}"
+                                                                                                PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
+                                                                                                ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
+                                                                                                NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
+                                                                                                KeyframeParameter="Gain"/>
 
-                                    <!-- AUDIO EFFECTS & MIXING (Section 5.3) -->
-                                    <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="8"
-                                            IsEnabled="{Binding Inspector.HasSelectedClip}">
-                                        <StackPanel Spacing="2">
-                                            <TextBlock Text="AUDIO EFFECTS &amp; MIXING" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5"/>
-                                            <WrapPanel>
-                                                <CheckBox Content="Clean Voice Noise" IsChecked="{Binding Inspector.DialogueIsolateEnabled}" FontSize="10" Margin="0,0,10,0"/>
-                                                <CheckBox Content="Compressor &amp; Limiter" IsChecked="{Binding Inspector.CompressorEnabled}" FontSize="10"/>
-                                            </WrapPanel>
+                                                                <controls:PrecisionParameterRow Label="Pan L/R" Minimum="-1.0" Maximum="1.0" DefaultValue="0" Step="0.05" Decimals="2"
+                                                                                                Value="{Binding Inspector.Pan}"/>
+                                                                <controls:PrecisionParameterRow Label="Fade In" Minimum="0.0" Maximum="5.0" DefaultValue="0" Step="0.1" Decimals="1" Unit="s"
+                                                                                                Value="{Binding Inspector.FadeInDuration}"/>
+                                                                <controls:PrecisionParameterRow Label="Fade Out" Minimum="0.0" Maximum="5.0" DefaultValue="0" Step="0.1" Decimals="1" Unit="s"
+                                                                                                Value="{Binding Inspector.FadeOutDuration}"/>
+                                                                <controls:PrecisionParameterRow Label="Reverb Mix" Minimum="0.0" Maximum="1.0" DefaultValue="0.25" Step="0.02" Decimals="2"
+                                                                                                Value="{Binding Inspector.ReverbDryWet}"/>
 
-                                            <controls:PrecisionParameterRow Label="Vol (dB)" Minimum="-48" Maximum="12" DefaultValue="0" Step="0.5" Decimals="1" Unit=" dB"
-                                                                            Value="{Binding Inspector.GainDb}"
-                                                                            ShowKeyframeControls="True"
-                                                                            KeyframeDiamondIcon="{Binding Inspector.GainDiamondIcon}"
-                                                                            PrevKeyframeCommand="{Binding Inspector.PrevKeyframeCommand}"
-                                                                            ToggleKeyframeCommand="{Binding Inspector.ToggleKeyframeCommand}"
-                                                                            NextKeyframeCommand="{Binding Inspector.NextKeyframeCommand}"
-                                                                            KeyframeParameter="Gain"/>
+                                                                <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
+                                                                    <ComboBox Grid.Column="0" ItemsSource="{Binding Inspector.EqPresets}"
+                                                                              SelectedItem="{Binding Inspector.SelectedEqPreset}" HorizontalAlignment="Stretch" Margin="0,0,3,0" ToolTip.Tip="Equalizer Preset"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.ReverbPresets}"
+                                                                              SelectedItem="{Binding Inspector.SelectedReverbPreset}" HorizontalAlignment="Stretch" Margin="3,0,0,0" ToolTip.Tip="Acoustic Reverb"/>
+                                                                </Grid>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
+                                            </StackPanel>
+                                        </ScrollViewer>
+                                    </TabItem>
 
-                                            <controls:PrecisionParameterRow Label="Pan L/R" Minimum="-1.0" Maximum="1.0" DefaultValue="0" Step="0.05" Decimals="2"
-                                                                            Value="{Binding Inspector.Pan}"/>
-                                            <controls:PrecisionParameterRow Label="Fade In" Minimum="0.0" Maximum="5.0" DefaultValue="0" Step="0.1" Decimals="1" Unit="s"
-                                                                            Value="{Binding Inspector.FadeInDuration}"/>
-                                            <controls:PrecisionParameterRow Label="Fade Out" Minimum="0.0" Maximum="5.0" DefaultValue="0" Step="0.1" Decimals="1" Unit="s"
-                                                                            Value="{Binding Inspector.FadeOutDuration}"/>
-                                            <controls:PrecisionParameterRow Label="Reverb Mix" Minimum="0.0" Maximum="1.0" DefaultValue="0.25" Step="0.02" Decimals="2"
-                                                                            Value="{Binding Inspector.ReverbDryWet}"/>
+                                    <!-- SUB-TAB 4: EFFECTS & TRANSITIONS -->
+                                    <TabItem Header="✨ Effects" FontSize="11" Padding="8,4">
+                                        <ScrollViewer Margin="0,4,0,0">
+                                            <StackPanel Spacing="6" IsEnabled="{Binding Inspector.HasSelectedClip}">
 
-                                            <Grid ColumnDefinitions="*,*" Margin="0,3,0,0">
-                                                <ComboBox Grid.Column="0" ItemsSource="{Binding Inspector.EqPresets}"
-                                                          SelectedItem="{Binding Inspector.SelectedEqPreset}" HorizontalAlignment="Stretch" Margin="0,0,3,0" ToolTip.Tip="Equalizer Preset"/>
-                                                <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.ReverbPresets}"
-                                                          SelectedItem="{Binding Inspector.SelectedReverbPreset}" HorizontalAlignment="Stretch" Margin="3,0,0,0" ToolTip.Tip="Acoustic Reverb"/>
-                                            </Grid>
-                                        </StackPanel>
-                                    </Border>
-                                </StackPanel>
-                            </ScrollViewer>
+                                                <!-- CARD 1: STANDALONE TRANSITION BLOCK (Visible when a transition block is selected) -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4"
+                                                        IsVisible="{Binding Inspector.IsTransitionClip}">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                                                <TextBlock Grid.Column="0" Text="STANDALONE TRANSITION BLOCK" FontWeight="Bold" Foreground="#FF38BDF8" FontSize="10.5" VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="1" Content="▶ Preview" Command="{Binding Inspector.PreviewTransitionCommand}"
+                                                                        Padding="6,1" FontSize="9.5" Margin="0,0,4,0" ToolTip.Tip="Preview transition playback"/>
+                                                                <Button Grid.Column="2" Content="↺ Reset" Command="{Binding Inspector.ResetTransitionCommand}"
+                                                                        Padding="6,1" FontSize="9.5" ToolTip.Tip="Reset transition to default"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6">
+                                                            <StackPanel Spacing="3">
+                                                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,3">
+                                                                    <TextBlock Grid.Column="0" Text="Type:" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TransitionTypes}"
+                                                                              SelectedItem="{Binding Inspector.SelectedTransitionType}" HorizontalAlignment="Stretch"/>
+                                                                </Grid>
+
+                                                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,3" IsVisible="{Binding Inspector.IsTransitionDirectionSupported}">
+                                                                    <TextBlock Grid.Column="0" Text="Direction:" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TransitionDirections}"
+                                                                              SelectedItem="{Binding Inspector.SelectedTransitionDirection}" HorizontalAlignment="Stretch"/>
+                                                                </Grid>
+
+                                                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,3">
+                                                                    <TextBlock Grid.Column="0" Text="Easing:" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TransitionEasingOptions}"
+                                                                              SelectedItem="{Binding Inspector.SelectedTransitionEasing}" HorizontalAlignment="Stretch"/>
+                                                                </Grid>
+
+                                                                <controls:PrecisionParameterRow Label="Start Time" Minimum="0" Maximum="3600" DefaultValue="0" Step="0.05" Decimals="2" Unit="s"
+                                                                                                Value="{Binding Inspector.TransitionStart}"/>
+                                                                <controls:PrecisionParameterRow Label="End Time" Minimum="0.05" Maximum="3600" DefaultValue="0.5" Step="0.05" Decimals="2" Unit="s"
+                                                                                                Value="{Binding Inspector.TransitionEnd}"/>
+                                                                <controls:PrecisionParameterRow Label="Duration" Minimum="0.05" Maximum="10.0" DefaultValue="0.5" Step="0.05" Decimals="2" Unit="s"
+                                                                                                Value="{Binding Inspector.TransitionDuration}"/>
+                                                                <controls:PrecisionParameterRow Label="Speed" Minimum="0.25" Maximum="4.0" DefaultValue="1.0" Step="0.05" Decimals="2" Unit="x"
+                                                                                                Value="{Binding Inspector.TransitionSpeed}"/>
+                                                                <controls:PrecisionParameterRow Label="Start Opacity" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.TransitionStartOpacity}"/>
+                                                                <controls:PrecisionParameterRow Label="End Opacity" Minimum="0" Maximum="100" DefaultValue="100" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.TransitionEndOpacity}"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- CARD 2: CLIP FADE IN (HEAD TRANSITION) (Visible when regular clip selected) -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4"
+                                                        IsVisible="{Binding !Inspector.IsTransitionClip}">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="*,Auto">
+                                                                <CheckBox Grid.Column="0" Content="FADE IN (HEAD TRANSITION)" IsChecked="{Binding Inspector.FadeInEnabled}"
+                                                                          FontWeight="Bold" Foreground="#FF38BDF8" FontSize="10.5"/>
+                                                                <Button Grid.Column="1" Content="▶ Preview" Command="{Binding Inspector.PreviewTransitionCommand}"
+                                                                        Padding="6,1" FontSize="9.5" ToolTip.Tip="Preview Fade In"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.FadeInEnabled}">
+                                                            <StackPanel Spacing="3">
+                                                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,3">
+                                                                    <TextBlock Grid.Column="0" Text="Type:" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.FadeInTypes}"
+                                                                              SelectedItem="{Binding Inspector.FadeInType}" HorizontalAlignment="Stretch"/>
+                                                                </Grid>
+
+                                                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,3" IsVisible="{Binding Inspector.IsFadeInDirectionSupported}">
+                                                                    <TextBlock Grid.Column="0" Text="Direction:" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TransitionDirections}"
+                                                                              SelectedItem="{Binding Inspector.FadeInDirection}" HorizontalAlignment="Stretch"/>
+                                                                </Grid>
+
+                                                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,3">
+                                                                    <TextBlock Grid.Column="0" Text="Easing:" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TransitionEasingOptions}"
+                                                                              SelectedItem="{Binding Inspector.FadeInEasing}" HorizontalAlignment="Stretch"/>
+                                                                </Grid>
+
+                                                                <controls:PrecisionParameterRow Label="Start Offset" Minimum="0" Maximum="10.0" DefaultValue="0" Step="0.05" Decimals="2" Unit="s"
+                                                                                                Value="{Binding Inspector.FadeInStartOffset}"/>
+                                                                <controls:PrecisionParameterRow Label="Duration" Minimum="0.05" Maximum="10.0" DefaultValue="0.5" Step="0.05" Decimals="2" Unit="s"
+                                                                                                Value="{Binding Inspector.FadeInDuration}"/>
+                                                                <controls:PrecisionParameterRow Label="End Offset" Minimum="0.05" Maximum="15.0" DefaultValue="0.5" Step="0.05" Decimals="2" Unit="s"
+                                                                                                Value="{Binding Inspector.FadeInEndOffset}"/>
+                                                                <controls:PrecisionParameterRow Label="Speed" Minimum="0.25" Maximum="4.0" DefaultValue="1.0" Step="0.05" Decimals="2" Unit="x"
+                                                                                                Value="{Binding Inspector.FadeInSpeed}"/>
+                                                                <controls:PrecisionParameterRow Label="Start Opacity" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.FadeInStartOpacity}"/>
+                                                                <controls:PrecisionParameterRow Label="End Opacity" Minimum="0" Maximum="100" DefaultValue="100" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.FadeInEndOpacity}"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- CARD 3: CLIP FADE OUT (TAIL TRANSITION) (Visible when regular clip selected) -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4"
+                                                        IsVisible="{Binding !Inspector.IsTransitionClip}">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="*,Auto">
+                                                                <CheckBox Grid.Column="0" Content="FADE OUT (TAIL TRANSITION)" IsChecked="{Binding Inspector.FadeOutEnabled}"
+                                                                          FontWeight="Bold" Foreground="#FF38BDF8" FontSize="10.5"/>
+                                                                <Button Grid.Column="1" Content="▶ Preview" Command="{Binding Inspector.PreviewTransitionCommand}"
+                                                                        Padding="6,1" FontSize="9.5" ToolTip.Tip="Preview Fade Out"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.FadeOutEnabled}">
+                                                            <StackPanel Spacing="3">
+                                                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,3">
+                                                                    <TextBlock Grid.Column="0" Text="Type:" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.FadeOutTypes}"
+                                                                              SelectedItem="{Binding Inspector.FadeOutType}" HorizontalAlignment="Stretch"/>
+                                                                </Grid>
+
+                                                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,3" IsVisible="{Binding Inspector.IsFadeOutDirectionSupported}">
+                                                                    <TextBlock Grid.Column="0" Text="Direction:" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TransitionDirections}"
+                                                                              SelectedItem="{Binding Inspector.FadeOutDirection}" HorizontalAlignment="Stretch"/>
+                                                                </Grid>
+
+                                                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,3">
+                                                                    <TextBlock Grid.Column="0" Text="Easing:" VerticalAlignment="Center" FontSize="10" Foreground="#FF9CA3AF"/>
+                                                                    <ComboBox Grid.Column="1" ItemsSource="{Binding Inspector.TransitionEasingOptions}"
+                                                                              SelectedItem="{Binding Inspector.FadeOutEasing}" HorizontalAlignment="Stretch"/>
+                                                                </Grid>
+
+                                                                <controls:PrecisionParameterRow Label="Start Offset" Minimum="0" Maximum="10.0" DefaultValue="0.5" Step="0.05" Decimals="2" Unit="s"
+                                                                                                Value="{Binding Inspector.FadeOutStartOffset}"/>
+                                                                <controls:PrecisionParameterRow Label="Duration" Minimum="0.05" Maximum="10.0" DefaultValue="0.5" Step="0.05" Decimals="2" Unit="s"
+                                                                                                Value="{Binding Inspector.FadeOutDuration}"/>
+                                                                <controls:PrecisionParameterRow Label="End Offset" Minimum="0" Maximum="10.0" DefaultValue="0" Step="0.05" Decimals="2" Unit="s"
+                                                                                                Value="{Binding Inspector.FadeOutEndOffset}"/>
+                                                                <controls:PrecisionParameterRow Label="Speed" Minimum="0.25" Maximum="4.0" DefaultValue="1.0" Step="0.05" Decimals="2" Unit="x"
+                                                                                                Value="{Binding Inspector.FadeOutSpeed}"/>
+                                                                <controls:PrecisionParameterRow Label="Start Opacity" Minimum="0" Maximum="100" DefaultValue="100" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.FadeOutStartOpacity}"/>
+                                                                <controls:PrecisionParameterRow Label="End Opacity" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.FadeOutEndOpacity}"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <!-- QUICK TRANSITION TOOLS (Visible when regular clip selected) -->
+                                                <Grid ColumnDefinitions="*,*" Margin="0,2,0,2" IsVisible="{Binding !Inspector.IsTransitionClip}">
+                                                    <Button Grid.Column="0" Content="+ Transition Block"
+                                                            Command="{Binding Inspector.InsertStandaloneTransitionCommand}"
+                                                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                                            Padding="6,3" FontSize="10" Margin="0,0,2,0" ToolTip.Tip="Insert standalone transition block at clip cut point"/>
+                                                    <Button Grid.Column="1" Content="Apply Across Cuts"
+                                                            Command="{Binding Inspector.ApplyCurrentTransitionToAllClipsCommand}"
+                                                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                                            Padding="6,3" FontSize="10" Margin="2,0,0,0" ToolTip.Tip="Apply transition to all adjacent clips"/>
+                                                </Grid>
+
+                                                <!-- CARD 4: VIDEO EFFECTS (CAM SHAKE, BLUR, SHARPEN, GRAIN) -->
+                                                <Border Background="#FF1A1A1E" BorderBrush="#FF2E2E34" BorderThickness="1" CornerRadius="4"
+                                                        IsVisible="{Binding !Inspector.IsTransitionClip}">
+                                                    <StackPanel>
+                                                        <Border Background="#FF222226" BorderBrush="#FF2E2E34" BorderThickness="0,0,0,1" CornerRadius="3,3,0,0" Padding="8,5">
+                                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                                <Button Grid.Column="0" Content="{Binding Inspector.EffectsArrow}"
+                                                                        Command="{Binding Inspector.ToggleSectionCommand}" CommandParameter="Effects"
+                                                                        Background="Transparent" BorderThickness="0" Padding="0" Margin="0,0,6,0"
+                                                                        Foreground="#FF9A9AA6" FontSize="10" Width="14"/>
+                                                                <TextBlock Grid.Column="1" Text="VIDEO EFFECTS &amp; FILTERS" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="10.5" VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="2" Content="↺" Command="{Binding Inspector.ResetSectionCommand}" CommandParameter="Effects"
+                                                                        Background="Transparent" BorderThickness="0" Padding="3,0" Foreground="#FF9A9AA6" FontSize="11" ToolTip.Tip="Reset Effects"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <Border Padding="8,6" IsVisible="{Binding Inspector.IsVideoEffectsExpanded}">
+                                                            <StackPanel Spacing="2">
+                                                                <controls:PrecisionParameterRow Label="Cam Shake" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.CameraShakeAmount}"/>
+                                                                <controls:PrecisionParameterRow Label="Blur" Minimum="0" Maximum="25" DefaultValue="0" Step="0.5" Decimals="1" Unit="px"
+                                                                                                Value="{Binding Inspector.GaussianBlurSigma}"/>
+                                                                <controls:PrecisionParameterRow Label="Sharpen" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.SharpenAmount}"/>
+                                                                <controls:PrecisionParameterRow Label="RGB Split" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.ChromaticAberrationAmount}"/>
+                                                                <controls:PrecisionParameterRow Label="Film Grain" Minimum="0" Maximum="100" DefaultValue="0" Step="1" Decimals="0" Unit="%"
+                                                                                                Value="{Binding Inspector.FilmGrainAmount}"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
+
+                                            </StackPanel>
+                                        </ScrollViewer>
+                                    </TabItem>
+                                </TabControl>
+                            </Grid>
                         </TabItem>
 
                         <!-- TAB 2: AI ASSISTANT (LM STUDIO LOCAL + CLOUD AGENT) -->
-                        <TabItem Header="🤖 AI Assistant">
+                        <TabItem Header="Smart Assistant">
                             <Grid RowDefinitions="Auto,*,Auto" Margin="2">
                                 <Border Grid.Row="0" Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="6" Margin="0,0,0,4">
                                     <StackPanel Spacing="4">
                                         <Grid ColumnDefinitions="*,Auto,Auto">
-                                            <TextBlock Grid.Column="0" Text="AI EDIT ASSISTANT (LM STUDIO / GEMINI / GPT)" FontWeight="Bold" Foreground="#FF10B981" FontSize="10.5"/>
-                                            <Button Grid.Column="1" Content="⚙ AI Settings" Command="{Binding OpenSettingsModalCommand}" Padding="6,1" FontSize="9.5" Margin="0,0,4,0"/>
+                                            <TextBlock Grid.Column="0" Text="SMART EDIT ASSISTANT (LM STUDIO / GEMINI / GPT)" FontWeight="Bold" Foreground="#FF10B981" FontSize="10.5"/>
+                                            <Button Grid.Column="1" Content="⚙ Settings" Command="{Binding OpenSettingsModalCommand}" Padding="6,1" FontSize="9.5" Margin="0,0,4,0"/>
                                             <Button Grid.Column="2" Content="Clear" Command="{Binding AiCopilot.ClearConsoleLogCommand}" Padding="6,1" FontSize="9.5"/>
                                         </Grid>
                                         <WrapPanel>
@@ -721,8 +1175,8 @@
                                 <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,4,0,0">
                                     <TextBox Grid.Column="0" Text="{Binding AiCopilot.PromptInput}"
                                              FontFamily="Cascadia Mono, Consolas, Monospace"
-                                             Watermark="Ask AI to remove silence, add keyframe zoom, or create subtitles..." Margin="0,0,4,0"/>
-                                    <Button Grid.Column="1" Content="Run AI"
+                                             Watermark="Ask assistant to remove silence, add keyframe zoom, or create subtitles..." Margin="0,0,4,0"/>
+                                    <Button Grid.Column="1" Content="Execute"
                                             Command="{Binding AiCopilot.SendPromptCommand}"
                                             Background="#FF10B981" Foreground="#FF111215" FontWeight="Bold"/>
                                 </Grid>
@@ -766,17 +1220,21 @@
                                               FontSize="11" Padding="7,4" ToolTip.Tip="Link Video &amp; Audio Clips"/>
                                 <Button Content="◆ Keyframe (K)" Command="{Binding Inspector.AddMasterKeyframeAtPlayheadCommand}"
                                         Foreground="#FFF59E0B" FontWeight="SemiBold" ToolTip.Tip="Add Transform Keyframe at Playhead (K)"/>
+                                <Button Content="+ Adj Layer" Command="{Binding Timeline.AddAdjustmentLayerCommand}"
+                                        BorderBrush="#FF8B5CF6" Foreground="#FFC4B5FD" ToolTip.Tip="Add Adjustment Layer above Timeline"/>
+                                <Button Content="Compound Clip" Command="{Binding Timeline.CreateCompoundClipCommand}"
+                                        BorderBrush="#FF14B8A6" Foreground="#FF5EEAD4" ToolTip.Tip="Nest Selected Clip into Compound Sequence"/>
 
                                 <Separator Width="1" Background="#FF2D303B" Margin="3,4"/>
 
-                                <!-- Group 3: Quick AI Actions (#10B981) -->
+                                <!-- Group 3: Quick Smart Actions (#10B981) -->
                                 <Button Content="📝 Auto Subtitles" Command="{Binding Timeline.GenerateAutoCaptionsCommand}"
                                         BorderBrush="#FF10B981" Foreground="#FF10B981" FontWeight="SemiBold"/>
                                 <Button Content="🔇 Remove Silence" Command="{Binding OpenStripSilenceModalCommand}"
                                         BorderBrush="#FF10B981" Foreground="#FF10B981"/>
                                 <Button Content="🎙 Clean Voice Noise" Command="{Binding Timeline.EnhanceVoiceOnTimelineCommand}"
                                         BorderBrush="#FF10B981" Foreground="#FF10B981"/>
-                                <Button Content="🤖 AI Assistant (Ctrl+K)" Command="{Binding FocusAiAssistantCommand}"
+                                <Button Content="Smart Assistant (Ctrl+K)" Command="{Binding FocusAiAssistantCommand}"
                                         Background="#FF10B981" Foreground="#FF111215" FontWeight="Bold"/>
                             </StackPanel>
                         </ScrollViewer>
@@ -878,15 +1336,15 @@
             </Border>
         </Border>
 
-        <!-- ==================== MODAL 3: AI STUDIO SETTINGS (LM STUDIO + CLOUD API HUB) ==================== -->
+        <!-- ==================== MODAL 3: AUTOMATION & SPEECH SETTINGS (LM STUDIO + CLOUD API HUB) ==================== -->
         <Border Grid.Row="0" Grid.RowSpan="3" Background="#D8111215" IsVisible="{Binding IsSettingsModalOpen}">
             <Border Width="780" MaxHeight="700" Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="1"
                     CornerRadius="4" Padding="18" HorizontalAlignment="Center" VerticalAlignment="Center">
                 <Grid RowDefinitions="Auto,*,Auto">
                     <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
                         <StackPanel>
-                            <TextBlock Text="⚙ VORTEX AI STUDIO SETTINGS — LOCAL &amp; CLOUD AI HUB" FontSize="14" FontWeight="Bold" Foreground="#FFF3F4F6"/>
-                            <TextBlock Text="Connect Local AI Servers (LM Studio / Ollama) or Cloud APIs (OpenAI ChatGPT, Google Gemini, Claude, Groq)."
+                            <TextBlock Text="⚙ VORTEX STUDIO SETTINGS — AUTOMATION &amp; SPEECH HUB" FontSize="14" FontWeight="Bold" Foreground="#FFF3F4F6"/>
+                            <TextBlock Text="Connect Local Servers (LM Studio / Ollama) or Cloud APIs (OpenAI ChatGPT, Google Gemini, Claude, Groq)."
                                        Foreground="#FF9CA3AF" FontSize="11"/>
                         </StackPanel>
                         <Button Grid.Column="1" Content="Save &amp; Close" Command="{Binding CloseSettingsModalCommand}"
@@ -904,7 +1362,7 @@
                             <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="10">
                                 <StackPanel Spacing="6">
                                     <Grid ColumnDefinitions="*,Auto">
-                                        <TextBlock Grid.Column="0" Text="1. LOCAL AI SERVER (LM STUDIO / OLLAMA)" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                        <TextBlock Grid.Column="0" Text="1. LOCAL SERVER (LM STUDIO / OLLAMA)" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
                                         <Button Grid.Column="1" Content="🔌 Test Connection &amp; Fetch Models"
                                                 Command="{Binding Settings.TestLocalConnectionCommand}"
                                                 Background="#FF10B981" Foreground="#FF111215" FontWeight="Bold"/>
@@ -939,7 +1397,7 @@
                                                 Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"/>
                                     </Grid>
 
-                                    <CheckBox Content="Use Cloud API Provider for AI Edit Assistant (Uncheck to use LM Studio / Local AI)"
+                                    <CheckBox Content="Use Cloud API Provider for Smart Edit Assistant (Uncheck to use LM Studio / Local Server)"
                                               IsChecked="{Binding Settings.UseCloudAgent}" FontSize="11"/>
                                     <CheckBox Content="Use Cloud API for Auto Subtitles (OpenAI / Groq Whisper)"
                                               IsChecked="{Binding Settings.UseCloudTranscription}" FontSize="11"/>
@@ -947,7 +1405,7 @@
                                               IsChecked="{Binding Settings.UseCloudAudio}" FontSize="11"/>
 
                                     <Grid ColumnDefinitions="175,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
-                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Cloud LLM Provider:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Cloud Provider:" VerticalAlignment="Center" FontSize="11" Foreground="#FF9CA3AF"/>
                                         <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding Settings.CloudProviders}"
                                                   SelectedItem="{Binding Settings.SelectedCloudLlmProvider}" HorizontalAlignment="Stretch" Margin="0,2"/>
 
@@ -975,7 +1433,7 @@
 
                             <Border Background="#FF22242C" BorderBrush="#FF2D303B" BorderThickness="1" CornerRadius="3" Padding="10">
                                 <StackPanel Spacing="6">
-                                    <TextBlock Text="3. LOCAL AI WEIGHTS (OFFLINE SUBTITLES &amp; BACKGROUND REMOVAL)" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
+                                    <TextBlock Text="3. OFFLINE SPEECH &amp; REMOVAL MODELS" FontWeight="Bold" Foreground="#FFF3F4F6" FontSize="11"/>
                                     <TextBlock Text="{Binding Settings.ModelsFolderPath, StringFormat='Folder: {0}'}"
                                                FontFamily="Cascadia Mono, Consolas, Monospace" Foreground="#FF9CA3AF" FontSize="10"/>
 
@@ -1064,6 +1522,26 @@
                                     IsEnabled="{Binding !IsExporting}" Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"/>
                         </StackPanel>
                     </Grid>
+                </StackPanel>
+            </Border>
+        </Border>
+
+        <!-- ==================== MODAL 5: UNSAVED CHANGES CONFIRMATION DIALOG ==================== -->
+        <Border Grid.Row="0" Grid.RowSpan="3" Background="#D8111215" IsVisible="{Binding IsUnsavedChangesModalOpen}">
+            <Border Width="450" Background="#FF18191E" BorderBrush="#FF2D303B" BorderThickness="1"
+                    CornerRadius="4" Padding="18" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="UNSAVED PROJECT CHANGES" FontSize="13.5" FontWeight="Bold" Foreground="#FFF3F4F6"/>
+                    <TextBlock Text="{Binding UnsavedChangesMessage}"
+                               Foreground="#FF9CA3AF" FontSize="11.5" TextWrapping="Wrap"/>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,4,0,0">
+                        <Button Content="Cancel" Command="{Binding CancelUnsavedChangesModalCommand}"/>
+                        <Button Content="Discard Changes" Click="OnUnsavedModalDiscardClick"
+                                Background="#FF22242C" Foreground="#FFEF4444" FontWeight="SemiBold"/>
+                        <Button Content="Save &amp; Continue" Click="OnUnsavedModalSaveAndContinueClick"
+                                Background="#FF3B82F6" Foreground="#FFF3F4F6" FontWeight="SemiBold"/>
+                    </StackPanel>
                 </StackPanel>
             </Border>
         </Border>
